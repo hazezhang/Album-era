@@ -7,9 +7,22 @@ import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious
 type Mode = "fresh" | "preserved";
 type StyleId = "time" | "cherry" | "heavy" | "moss";
 type Recipe = [string, string][];
+type VisualAnalysis = {
+  brightness: number;
+  contrast: number;
+  saturation: number;
+  density: number;
+  negativeSpace: number;
+  warmth: number;
+  mood: string;
+};
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
 const FALLBACK = ["#477aa7", "#e5d29b", "#8d502c", "#9db8c1", "#182a3b"];
+const FALLBACK_ANALYSIS: VisualAnalysis = {
+  brightness: 46, contrast: 58, saturation: 45, density: 50, negativeSpace: 42, warmth: 48,
+  mood: "Quiet · cinematic · balanced",
+};
 const STYLES: Record<StyleId, {
   index: string; title: string; type: string; mood: string; cover: string; realCover?: boolean;
   bouquets: Record<Mode, string>; recipes: Record<Mode, Recipe>; shape: string;
@@ -66,13 +79,27 @@ function gap(a: number[], b: number[]) {
 function rgbFromHex(value: string) {
   return [1, 3, 5].map((start) => parseInt(value.slice(start, start + 2), 16));
 }
-function matchStyle(palette: string[]): StyleId {
+function visualMood(analysis: Omit<VisualAnalysis, "mood">) {
+  const light = analysis.brightness >= 58 ? "Luminous" : analysis.brightness <= 34 ? "Nocturnal" : "Muted";
+  const energy = analysis.contrast >= 62 || analysis.density >= 64 ? "dramatic" : analysis.density <= 38 ? "quiet" : "rhythmic";
+  const air = analysis.negativeSpace >= 55 ? "airy" : analysis.density >= 64 ? "lush" : "balanced";
+  return `${light} · ${energy} · ${air}`;
+}
+function matchStyle(palette: string[], analysis: VisualAnalysis): StyleId {
   const colours = palette.slice(0, 3).map(rgbFromHex);
-  const [r, g, b] = colours.reduce((sum, colour) => sum.map((v, i) => v + colour[i]), [0, 0, 0]).map((v) => v / colours.length);
-  if (g > r * 1.06 && g > b * 0.92) return "moss";
-  if (r > g * 1.12 && r > b * 1.08) return "cherry";
-  if (b > r * 1.04 || (b > g && r < 145)) return "time";
-  return "heavy";
+  const average = colours.reduce((sum, colour) => sum.map((v, i) => v + colour[i]), [0, 0, 0]).map((v) => v / colours.length);
+  const [r, g, b] = average;
+  const green = Math.max(0, (g - Math.max(r, b) * .82) / 90) * 100;
+  const blue = Math.max(0, (b - r * .84) / 90) * 100;
+  const red = Math.max(0, (r - Math.max(g, b) * .83) / 90) * 100;
+  const distance = (value: number, target: number) => Math.abs(value - target);
+  const scores: Record<StyleId, number> = {
+    time: blue * .9 - distance(analysis.brightness, 38) * .35 - distance(analysis.density, 45) * .22 + analysis.negativeSpace * .1,
+    cherry: red * 1.05 + analysis.saturation * .32 + analysis.warmth * .18 - distance(analysis.density, 66) * .18,
+    heavy: analysis.contrast * .38 + analysis.density * .23 + (100 - analysis.brightness) * .2 + blue * .18 + analysis.warmth * .1,
+    moss: green * 1.05 + (100 - analysis.saturation) * .13 + analysis.negativeSpace * .25 - distance(analysis.brightness, 50) * .16,
+  };
+  return (Object.entries(scores).sort((a, b) => b[1] - a[1])[0][0]) as StyleId;
 }
 async function readCover(file: File) {
   const src = await new Promise<string>((resolve, reject) => {
@@ -86,21 +113,45 @@ async function readCover(file: File) {
   });
   const canvas = document.createElement("canvas"); canvas.width = 72; canvas.height = 72;
   const context = canvas.getContext("2d", { willReadFrequently: true });
-  if (!context) return { src, palette: FALLBACK };
+  if (!context) return { src, palette: FALLBACK, analysis: FALLBACK_ANALYSIS };
   context.drawImage(image, 0, 0, 72, 72);
   const data = context.getImageData(0, 0, 72, 72).data;
   const counts = new Map<string, { rgb: number[]; count: number }>();
-  for (let i = 0; i < data.length; i += 16) {
-    const rgb = [data[i], data[i + 1], data[i + 2]].map((v) => Math.min(255, Math.round(v / 32) * 32));
+  const luminance: number[] = [];
+  let saturationTotal = 0; let warmthTotal = 0; let edgeTotal = 0; let calmPixels = 0;
+  for (let pixel = 0; pixel < 72 * 72; pixel += 1) {
+    const i = pixel * 4; const raw = [data[i], data[i + 1], data[i + 2]];
+    const [r, g, b] = raw; const max = Math.max(r, g, b); const min = Math.min(r, g, b);
+    const light = .2126 * r + .7152 * g + .0722 * b;
+    luminance.push(light); saturationTotal += max ? (max - min) / max : 0;
+    warmthTotal += Math.max(0, Math.min(1, .5 + (r - b) / 255));
+    if (pixel % 4 !== 0) continue;
+    const rgb = raw.map((v) => Math.min(255, Math.round(v / 32) * 32));
     const key = rgb.join("-"); const old = counts.get(key);
     counts.set(key, { rgb, count: (old?.count ?? 0) + 1 });
   }
+  for (let y = 1; y < 72; y += 1) for (let x = 1; x < 72; x += 1) {
+    const here = luminance[y * 72 + x];
+    const delta = (Math.abs(here - luminance[y * 72 + x - 1]) + Math.abs(here - luminance[(y - 1) * 72 + x])) / 2;
+    edgeTotal += delta; if (delta < 9) calmPixels += 1;
+  }
+  const mean = luminance.reduce((sum, value) => sum + value, 0) / luminance.length;
+  const deviation = Math.sqrt(luminance.reduce((sum, value) => sum + (value - mean) ** 2, 0) / luminance.length);
+  const baseAnalysis = {
+    brightness: Math.round(mean / 2.55),
+    contrast: Math.min(100, Math.round(deviation / .75)),
+    saturation: Math.round(saturationTotal / luminance.length * 100),
+    density: Math.min(100, Math.round(edgeTotal / ((71 * 71) * .32))),
+    negativeSpace: Math.round(calmPixels / (71 * 71) * 100),
+    warmth: Math.round(warmthTotal / luminance.length * 100),
+  };
+  const analysis = { ...baseAnalysis, mood: visualMood(baseAnalysis) };
   const selected: number[][] = [];
   for (const item of [...counts.values()].sort((a, b) => b.count - a.count)) {
     if (selected.every((colour) => gap(colour, item.rgb) > 64)) selected.push(item.rgb);
     if (selected.length === 5) break;
   }
-  return { src, palette: selected.length >= 3 ? selected.map(hex) : FALLBACK };
+  return { src, palette: selected.length >= 3 ? selected.map(hex) : FALLBACK, analysis };
 }
 
 function StudyCard({ id }: { id: StyleId }) {
@@ -132,6 +183,7 @@ export default function Home() {
   const [cover, setCover] = useState<string | null>(null);
   const [name, setName] = useState("Untitled cover");
   const [palette, setPalette] = useState(FALLBACK);
+  const [analysis, setAnalysis] = useState(FALLBACK_ANALYSIS);
   const [mode, setMode] = useState<Mode>("fresh");
   const [reading, setReading] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -143,12 +195,12 @@ export default function Home() {
     setReading(true); setMatched(null);
     try {
       const analysed = await readCover(file);
-      setCover(analysed.src); setPalette(analysed.palette); setName(file.name.replace(/\.[^/.]+$/, ""));
+      setCover(analysed.src); setPalette(analysed.palette); setAnalysis(analysed.analysis); setName(file.name.replace(/\.[^/.]+$/, ""));
       window.setTimeout(() => document.querySelector(".translate")?.scrollIntoView({ behavior: "smooth" }), 150);
     } finally { setReading(false); }
   }
   function reset() {
-    setCover(null); setName("Untitled cover"); setPalette(FALLBACK); setMatched(null); setGenerating(false);
+    setCover(null); setName("Untitled cover"); setPalette(FALLBACK); setAnalysis(FALLBACK_ANALYSIS); setMatched(null); setGenerating(false);
     if (input.current) input.current.value = "";
     document.querySelector("#studio")?.scrollIntoView({ behavior: "smooth" });
   }
@@ -160,7 +212,7 @@ export default function Home() {
       setGenerationStep(label);
       await new Promise((resolve) => window.setTimeout(resolve, wait));
     }
-    setMatched(matchStyle(palette)); setGenerating(false);
+    setMatched(matchStyle(palette, analysis)); setGenerating(false);
     window.setTimeout(() => result.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
   }
   const output = matched ? STYLES[matched] : null;
@@ -183,7 +235,9 @@ export default function Home() {
       context.font = "25px Georgia"; context.fillText(`${String(index + 1).padStart(2, "0")}  ${flower}`, 990, 290 + index * 82);
       context.font = "17px Arial"; context.fillStyle = "#656861"; context.fillText(role, 1032, 318 + index * 82); context.fillStyle = "#171916";
     });
-    context.font = "18px Arial"; context.fillText(output.shape, 70, 790);
+    context.font = "18px Arial"; context.fillText(output.shape, 70, 775);
+    context.fillStyle = "#656861"; context.font = "16px Arial";
+    context.fillText(`${analysis.mood} · light ${analysis.brightness} · contrast ${analysis.contrast} · density ${analysis.density} · air ${analysis.negativeSpace}`, 70, 815);
     const link = document.createElement("a"); link.download = `${name || "album"}-${mode}-florist-card.png`; link.href = canvas.toDataURL("image/png"); link.click();
   }
 
@@ -206,6 +260,11 @@ export default function Home() {
             <h2>{reading ? "Reading image…" : name}</h2>
             <div className="palette" aria-label="Extracted colour palette">{palette.map((colour, index) => <i key={`${colour}-${index}`} style={{ background: colour }} />)}</div>
             <code>{palette.join(" · ").toUpperCase()}</code>
+            {cover && <div className="visual-dna" aria-label="Visual analysis">
+              <span><b>{analysis.brightness}</b> LIGHT</span><span><b>{analysis.contrast}</b> CONTRAST</span>
+              <span><b>{analysis.density}</b> DENSITY</span><span><b>{analysis.negativeSpace}</b> AIR</span>
+              <p>{analysis.mood}</p>
+            </div>}
           </aside>
         </div>
       </section>
@@ -226,6 +285,7 @@ export default function Home() {
           <div className="result-copy">
             <p className="eyebrow">YOUR BOUQUET · {mode.toUpperCase()}</p><h2>{output.title}</h2>
             <p>Matched from your cover’s palette to the <strong>{output.type}</strong> floral system.</p>
+            <div className="match-note"><small>VISUAL TRANSLATION</small><p>{analysis.mood}. The arrangement carries over your image’s light level, contrast rhythm, visual density and negative space—not only its colours.</p></div>
             <div className="result-palette">{palette.map((colour, index) => <i key={`${colour}-result-${index}`} style={{ background: colour }} />)}</div>
             <div className="result-actions"><button className="primary" onClick={downloadCard}><Download /> Download florist card</button><button onClick={reset}><RotateCcw /> Try another cover</button></div>
             <small>MVP demo: art-directed matching engine. Production will generate a unique arrangement for every cover.</small>
