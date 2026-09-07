@@ -1,8 +1,19 @@
 # Album / Bouquet
 
-A mobile-first prototype that turns an uploaded album or song cover into a florist-ready bouquet brief. It extracts a five-colour palette in the browser, supports fresh and preserved flower modes, and presents a material recipe that can be taken to a florist.
+A mobile-first prototype that turns an uploaded album or song cover into a unique, florist-ready bouquet. The browser handles upload and presentation; a server-side Worker analyses the image with vision, passes both the reference image and its visual system to GPT Image, and returns the generated bouquet plus its material recipe.
 
-The first approved visual study translates the blue `time machine` cover into one fresh and one preserved arrangement.
+The four art-directed studies remain as loading references and an explicitly labelled fallback when live generation is unavailable.
+
+## Live generation
+
+The Worker exposes `POST /api/generate` and accepts multipart fields `image` (JPEG, PNG or WebP, up to 8 MB) and `mode` (`fresh` or `preserved`). API credentials never enter the browser bundle.
+
+Production runtime variables:
+
+- `OPENAI_API_KEY` (secret, required)
+- `OPENAI_VISION_MODEL` (optional; defaults to `gpt-5.4-mini`)
+
+For a separately hosted static frontend, build with `NEXT_PUBLIC_GENERATION_API_URL` set to the absolute Worker endpoint. The endpoint currently allows the GitHub Pages origin and local development origins through CORS.
 
 ## Development
 

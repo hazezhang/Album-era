@@ -27,6 +27,7 @@ jobs:
       - run: npx next build
         env:
           NEXT_PUBLIC_BASE_PATH: /Album-era
+          NEXT_PUBLIC_GENERATION_API_URL: https://album-era.hazellfish-z.chatgpt.site/api/generate
       - uses: actions/upload-pages-artifact@v3
         with:
           path: out
