@@ -23,4 +23,4 @@
 .study-cover,.study-bouquet{object-fit:contain;background:#050605}
 .study-cover>img,.study-cover.real-cover>img{position:static;width:100%;max-width:100%;height:100%;object-fit:contain}
 .bouquet-stage{aspect-ratio:1;display:grid;place-items:center}
-.bouquet-stage .study-bouquet{width:88%;height:88%;aspect-ratio:auto}
+.bouquet-stage .study-bouquet{width:80%;height:80%;aspect-ratio:auto}
