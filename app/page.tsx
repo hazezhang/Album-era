@@ -16,7 +16,17 @@ type VisualAnalysis = {
   warmth: number;
   mood: string;
 };
+type GeneratedAnalysis = VisualAnalysis & {
+  title: string;
+  palette: string[];
+  composition: string;
+  shape: string;
+  rationale: string;
+  recipe: Array<{ flower: string; role: string; quantity: string }>;
+};
+type GeneratedBouquet = { imageDataUrl: string; analysis: GeneratedAnalysis };
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+const GENERATION_API_URL = process.env.NEXT_PUBLIC_GENERATION_API_URL ?? `${BASE_PATH}/api/generate`;
 
 const FALLBACK = ["#477aa7", "#e5d29b", "#8d502c", "#9db8c1", "#182a3b"];
 const FALLBACK_ANALYSIS: VisualAnalysis = {
@@ -181,6 +191,7 @@ export default function Home() {
   const input = useRef<HTMLInputElement>(null);
   const result = useRef<HTMLElement>(null);
   const [cover, setCover] = useState<string | null>(null);
+  const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [name, setName] = useState("Untitled cover");
   const [palette, setPalette] = useState(FALLBACK);
   const [analysis, setAnalysis] = useState(FALLBACK_ANALYSIS);
@@ -189,10 +200,12 @@ export default function Home() {
   const [generating, setGenerating] = useState(false);
   const [generationStep, setGenerationStep] = useState("Reading the cover");
   const [matched, setMatched] = useState<StyleId | null>(null);
+  const [generated, setGenerated] = useState<GeneratedBouquet | null>(null);
+  const [generationError, setGenerationError] = useState<string | null>(null);
 
   async function select(file?: File) {
     if (!file) return;
-    setReading(true); setMatched(null);
+    setReading(true); setMatched(null); setGenerated(null); setGenerationError(null); setSourceFile(file);
     try {
       const analysed = await readCover(file);
       setCover(analysed.src); setPalette(analysed.palette); setAnalysis(analysed.analysis); setName(file.name.replace(/\.[^/.]+$/, ""));
@@ -200,42 +213,58 @@ export default function Home() {
     } finally { setReading(false); }
   }
   function reset() {
-    setCover(null); setName("Untitled cover"); setPalette(FALLBACK); setAnalysis(FALLBACK_ANALYSIS); setMatched(null); setGenerating(false);
+    setCover(null); setSourceFile(null); setName("Untitled cover"); setPalette(FALLBACK); setAnalysis(FALLBACK_ANALYSIS); setMatched(null); setGenerated(null); setGenerationError(null); setGenerating(false);
     if (input.current) input.current.value = "";
     document.querySelector("#studio")?.scrollIntoView({ behavior: "smooth" });
   }
   async function generate() {
-    if (!cover || reading || generating) return;
-    setGenerating(true); setMatched(null);
-    const steps = [["Extracting colour hierarchy", 650], ["Matching floral structure", 750], ["Preparing the florist brief", 700]] as const;
-    for (const [label, wait] of steps) {
-      setGenerationStep(label);
-      await new Promise((resolve) => window.setTimeout(resolve, wait));
+    if (!cover || !sourceFile || reading || generating) return;
+    setGenerating(true); setMatched(null); setGenerated(null); setGenerationError(null);
+    setGenerationStep("Reading colour, light and spatial rhythm");
+    try {
+      const form = new FormData(); form.append("image", sourceFile); form.append("mode", mode);
+      window.setTimeout(() => setGenerationStep("Building a reference-led bouquet"), 1800);
+      const response = await fetch(GENERATION_API_URL, { method: "POST", body: form });
+      const payload = await response.json().catch(() => ({})) as Partial<GeneratedBouquet> & { error?: string };
+      if (!response.ok || !payload.imageDataUrl || !payload.analysis) throw new Error(payload.error || "The live generator did not return a bouquet.");
+      setGenerationStep("Checking botanical structure");
+      setGenerated({ imageDataUrl: payload.imageDataUrl, analysis: payload.analysis });
+      setPalette(payload.analysis.palette); setAnalysis(payload.analysis);
+    } catch (error) {
+      setMatched(matchStyle(palette, analysis));
+      setGenerationError(error instanceof Error ? error.message : "Live generation failed.");
+    } finally {
+      setGenerating(false);
+      window.setTimeout(() => result.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
     }
-    setMatched(matchStyle(palette, analysis)); setGenerating(false);
-    window.setTimeout(() => result.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100);
   }
   const output = matched ? STYLES[matched] : null;
+  const bouquetSrc = generated?.imageDataUrl ?? (output ? output.bouquets[mode] : null);
+  const resultTitle = generated?.analysis.title ?? output?.title;
+  const resultShape = generated?.analysis.shape ?? output?.shape;
+  const resultRecipe: Recipe = generated
+    ? generated.analysis.recipe.map((item) => [item.flower, `${item.role} · ${item.quantity}`])
+    : output?.recipes[mode] ?? [];
 
   async function downloadCard() {
-    if (!cover || !output) return;
+    if (!cover || !bouquetSrc || !resultTitle || !resultShape) return;
     const canvas = document.createElement("canvas"); canvas.width = 1400; canvas.height = 900;
     const context = canvas.getContext("2d"); if (!context) return;
     const load = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => {
       const image = new Image(); image.onload = () => resolve(image); image.onerror = reject; image.src = src;
     });
-    const [sourceImage, bouquetImage] = await Promise.all([load(cover), load(output.bouquets[mode])]);
+    const [sourceImage, bouquetImage] = await Promise.all([load(cover), load(bouquetSrc)]);
     context.fillStyle = "#eee9dc"; context.fillRect(0, 0, canvas.width, canvas.height);
     context.fillStyle = "#171916"; context.font = "24px Arial"; context.fillText("ALBUM / BOUQUET · FLORIST REFERENCE", 70, 70);
     context.font = "56px Georgia"; context.fillText(name.slice(0, 34), 70, 145);
     context.drawImage(sourceImage, 70, 205, 310, 310); context.drawImage(bouquetImage, 420, 205, 520, 520);
     palette.forEach((colour, index) => { context.fillStyle = colour; context.fillRect(70 + index * 62, 535, 62, 52); });
-    context.fillStyle = "#171916"; context.font = "22px Arial"; context.fillText(`${mode.toUpperCase()} · ${output.title.toUpperCase()}`, 990, 225);
-    output.recipes[mode].forEach(([flower, role], index) => {
+    context.fillStyle = "#171916"; context.font = "22px Arial"; context.fillText(`${mode.toUpperCase()} · ${resultTitle.toUpperCase()}`, 990, 225);
+    resultRecipe.forEach(([flower, role], index) => {
       context.font = "25px Georgia"; context.fillText(`${String(index + 1).padStart(2, "0")}  ${flower}`, 990, 290 + index * 82);
       context.font = "17px Arial"; context.fillStyle = "#656861"; context.fillText(role, 1032, 318 + index * 82); context.fillStyle = "#171916";
     });
-    context.font = "18px Arial"; context.fillText(output.shape, 70, 775);
+    context.font = "18px Arial"; context.fillText(resultShape, 70, 775);
     context.fillStyle = "#656861"; context.font = "16px Arial";
     context.fillText(`${analysis.mood} · light ${analysis.brightness} · contrast ${analysis.contrast} · density ${analysis.density} · air ${analysis.negativeSpace}`, 70, 815);
     const link = document.createElement("a"); link.download = `${name || "album"}-${mode}-florist-card.png`; link.href = canvas.toDataURL("image/png"); link.click();
@@ -251,7 +280,7 @@ export default function Home() {
           <p className="lede">Upload an album or song cover. Its colour, contrast and mood become a bouquet a florist can actually make.</p>
           <button className="upload" onClick={() => input.current?.click()} type="button"><ImagePlus />{cover ? "Choose another cover" : "Upload a cover"}</button>
           <input ref={input} className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" onChange={(event) => select(event.target.files?.[0])} />
-          <small>Your image stays in this browser during the demo.</small>
+          <small>Your image is sent securely to the generation service and is not stored by this demo.</small>
         </div>
         <div className="workbench">
           <div className="cover-frame">{cover ? <img src={cover} alt="Uploaded album or song cover" /> : <div className="placeholder"><span>DROP</span><span>THE</span><span>COVER</span></div>}<b>01 / SOURCE</b></div>
@@ -272,36 +301,37 @@ export default function Home() {
       <section className="translate">
         <div className="section-heading"><span>02</span><div><p className="eyebrow">CHOOSE THE MATERIAL</p><h2>How should it live?</h2></div></div>
         <div className="modes" role="radiogroup" aria-label="Bouquet material">
-          <button className={mode === "fresh" ? "active" : ""} role="radio" aria-checked={mode === "fresh"} onClick={() => { setMode("fresh"); setMatched(null); }}><span>01</span><strong>Fresh flowers</strong><small>Seasonal, fragrant and alive. Includes florist substitutions.</small></button>
-          <button className={mode === "preserved" ? "active" : ""} role="radio" aria-checked={mode === "preserved"} onClick={() => { setMode("preserved"); setMatched(null); }}><span>02</span><strong>Preserved flowers</strong><small>Long-lasting, sculptural and easier to recreate as a gift.</small></button>
+          <button className={mode === "fresh" ? "active" : ""} role="radio" aria-checked={mode === "fresh"} onClick={() => { setMode("fresh"); setMatched(null); setGenerated(null); setGenerationError(null); }}><span>01</span><strong>Fresh flowers</strong><small>Seasonal, fragrant and alive. Includes florist substitutions.</small></button>
+          <button className={mode === "preserved" ? "active" : ""} role="radio" aria-checked={mode === "preserved"} onClick={() => { setMode("preserved"); setMatched(null); setGenerated(null); setGenerationError(null); }}><span>02</span><strong>Preserved flowers</strong><small>Long-lasting, sculptural and easier to recreate as a gift.</small></button>
         </div>
         <button className="build" disabled={!cover || reading || generating} onClick={generate}><span>{generating ? generationStep : "Generate my bouquet"}</span>{generating ? <Sparkles className="pulse" /> : <ArrowDown />}</button>
         {!cover && <small className="hint">Upload a cover first to unlock generation.</small>}
         {generating && <div className="generation-line"><i /></div>}
       </section>
 
-      <section className={`result ${output ? "ready" : ""}`} ref={result} aria-live="polite">
-        {output ? <>
+      <section className={`result ${bouquetSrc ? "ready" : ""}`} ref={result} aria-live="polite">
+        {bouquetSrc && resultTitle && resultShape ? <>
           <div className="result-copy">
-            <p className="eyebrow">YOUR BOUQUET · {mode.toUpperCase()}</p><h2>{output.title}</h2>
-            <p>Matched from your cover’s palette to the <strong>{output.type}</strong> floral system.</p>
-            <div className="match-note"><small>VISUAL TRANSLATION</small><p>{analysis.mood}. The arrangement carries over your image’s light level, contrast rhythm, visual density and negative space—not only its colours.</p></div>
+            <p className="eyebrow">YOUR BOUQUET · {mode.toUpperCase()} · {generated ? "LIVE GENERATION" : "FALLBACK STUDY"}</p><h2>{resultTitle}</h2>
+            <p>{generated ? "Generated from the uploaded image as a high-fidelity visual reference." : <>Live generation was unavailable, so this is the closest <strong>{output?.type}</strong> case study.</>}</p>
+            <div className="match-note"><small>VISUAL TRANSLATION</small><p>{generated?.analysis.rationale ?? `${analysis.mood}. The fallback carries over light level, contrast rhythm, density and negative space—not only colour.`}</p></div>
+            {generationError && <p className="generation-error">LIVE API FALLBACK · {generationError}</p>}
             <div className="result-palette">{palette.map((colour, index) => <i key={`${colour}-result-${index}`} style={{ background: colour }} />)}</div>
             <div className="result-actions"><button className="primary" onClick={downloadCard}><Download /> Download florist card</button><button onClick={reset}><RotateCcw /> Try another cover</button></div>
-            <small>MVP demo: art-directed matching engine. Production will generate a unique arrangement for every cover.</small>
+            <small>{generated ? "Unique API-generated reference. Review botanical feasibility with your florist." : "Fallback preview only — not an API-generated result."}</small>
           </div>
           <div className="result-art">
             <div className="result-source"><img src={cover!} alt="Your uploaded cover" /><span>SOURCE</span></div>
-            <div className="result-bouquet"><img src={output.bouquets[mode]} alt={`Generated ${mode} bouquet reference`} /><span>BOUQUET / {mode.toUpperCase()}</span></div>
+            <div className="result-bouquet"><img src={bouquetSrc} alt={`${generated ? "Generated" : "Fallback"} ${mode} bouquet reference`} /><span>BOUQUET / {mode.toUpperCase()}</span></div>
           </div>
           <article className="florist-card">
             <header><div><small>FLORIST REFERENCE</small><h3>{name}</h3></div><code>{mode === "fresh" ? "FRESH / 01" : "PRESERVED / 02"}</code></header>
             <div className="florist-body">
               <div className="mini-source"><img src={cover!} alt="" /><span>{palette.map((colour, index) => <i key={`${colour}-card-${index}`} style={{ background: colour }} />)}</span></div>
-              <div className="recipe"><small>MATERIAL RECIPE</small>{output.recipes[mode].map(([flower, role], index) => <div key={flower}><code>{String(index + 1).padStart(2, "0")}</code><strong>{flower}</strong><span>{role}</span></div>)}</div>
+              <div className="recipe"><small>MATERIAL RECIPE</small>{resultRecipe.map(([flower, role], index) => <div key={`${flower}-${index}`}><code>{String(index + 1).padStart(2, "0")}</code><strong>{flower}</strong><span>{role}</span></div>)}</div>
             </div>
-            <footer><div><small>COLOUR RATIO</small><p>45% dominant · 25% light · 20% secondary · 10% accent</p></div><div><small>SHAPE</small><p>{output.shape}</p></div></footer>
-            <div className="card-status"><Check /> Ready to show a florist</div>
+            <footer><div><small>COLOUR ORDER</small><p>Dominant → secondary → light → accent</p></div><div><small>SHAPE</small><p>{resultShape}</p></div></footer>
+            <div className="card-status"><Check /> {generated ? "API generated · ready for review" : "Fallback study · generation unavailable"}</div>
           </article>
         </> : <div className="result-empty"><span>03</span><p>Your generated bouquet and florist brief will appear here.</p></div>}
       </section>
