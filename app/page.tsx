@@ -15,14 +15,14 @@ const STYLES: Record<StyleId, {
   bouquets: Record<Mode, string>; recipes: Record<Mode, Recipe>; shape: string;
 }> = {
   time: {
-    index: "01", title: "Time machine", type: "Dream pop study", mood: "Slate blue · cream · caramel",
-    cover: `${BASE_PATH}/time-machine-source.jpeg`, realCover: true,
-    bouquets: { fresh: `${BASE_PATH}/time-machine-fresh.webp`, preserved: `${BASE_PATH}/time-machine-preserved.webp` },
+    index: "01", title: "Lunar veil", type: "Ambient study", mood: "Midnight blue · pearl · amber",
+    cover: `${BASE_PATH}/lunar-veil-cover.webp`,
+    bouquets: { fresh: `${BASE_PATH}/lunar-veil-fresh.webp`, preserved: `${BASE_PATH}/lunar-veil-preserved.webp` },
     recipes: {
-      fresh: [["Garden rose", "focal · 5 stems"], ["Ranunculus", "secondary · 6 stems"], ["Delphinium", "line · 4 stems"], ["Hydrangea", "volume · 2 heads"], ["Cymbidium", "accent · 3 blooms"]],
-      preserved: [["Preserved hydrangea", "volume · 3 heads"], ["Sola wood rose", "focal · 5 stems"], ["Banksia", "structure · 3 stems"], ["Dyed ruscus", "line · 4 stems"], ["Palm spear", "accent · 1 stem"]],
+      fresh: [["White ranunculus", "focal · 5 stems"], ["Delphinium", "line · 5 stems"], ["Baby's breath", "air · 7 stems"], ["Silver foliage", "texture · 4 stems"], ["Amber poppy", "accent · 1 bloom"]],
+      preserved: [["Preserved ranunculus", "focal · 4 stems"], ["Dried delphinium", "line · 5 stems"], ["Bleached gypsophila", "air · 7 stems"], ["Silver lunaria", "texture · 5 stems"], ["Dried poppy", "accent · 1 bloom"]],
     },
-    shape: "Asymmetrical, open silhouette with a soft central cluster.",
+    shape: "Moonlit vertical silhouette with a light, translucent edge.",
   },
   cherry: {
     index: "02", title: "Cherry static", type: "Pop study", mood: "Cherry red · powder pink · silver",
