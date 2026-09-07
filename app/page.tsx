@@ -17,7 +17,7 @@ const STYLES: Record<StyleId, {
   time: {
     index: "01", title: "Time machine", type: "Dream pop study", mood: "Slate blue · cream · caramel",
     cover: `${BASE_PATH}/time-machine-source.jpeg`, realCover: true,
-    bouquets: { fresh: `${BASE_PATH}/time-machine-fresh.png`, preserved: `${BASE_PATH}/time-machine-preserved.png` },
+    bouquets: { fresh: `${BASE_PATH}/time-machine-fresh.webp`, preserved: `${BASE_PATH}/time-machine-preserved.webp` },
     recipes: {
       fresh: [["Garden rose", "focal · 5 stems"], ["Ranunculus", "secondary · 6 stems"], ["Delphinium", "line · 4 stems"], ["Hydrangea", "volume · 2 heads"], ["Cymbidium", "accent · 3 blooms"]],
       preserved: [["Preserved hydrangea", "volume · 3 heads"], ["Sola wood rose", "focal · 5 stems"], ["Banksia", "structure · 3 stems"], ["Dyed ruscus", "line · 4 stems"], ["Palm spear", "accent · 1 stem"]],
@@ -26,8 +26,8 @@ const STYLES: Record<StyleId, {
   },
   cherry: {
     index: "02", title: "Cherry static", type: "Pop study", mood: "Cherry red · powder pink · silver",
-    cover: `${BASE_PATH}/cherry-static-cover.png`,
-    bouquets: { fresh: `${BASE_PATH}/cherry-static-bouquet.png`, preserved: `${BASE_PATH}/cherry-static-preserved.png` },
+    cover: `${BASE_PATH}/cherry-static-cover.webp`,
+    bouquets: { fresh: `${BASE_PATH}/cherry-static-bouquet.webp`, preserved: `${BASE_PATH}/cherry-static-preserved.webp` },
     recipes: {
       fresh: [["Anthurium", "focal · 3 stems"], ["Ranunculus", "secondary · 7 stems"], ["Pink lily", "volume · 3 stems"], ["Silver brunia", "texture · 5 stems"], ["Oxblood foliage", "line · 4 stems"]],
       preserved: [["Red hydrangea", "volume · 3 heads"], ["Sola wood rose", "focal · 4 stems"], ["Dyed ruscus", "line · 5 stems"], ["Silver brunia", "texture · 5 stems"], ["Dried palm", "structure · 2 stems"]],
@@ -36,8 +36,8 @@ const STYLES: Record<StyleId, {
   },
   heavy: {
     index: "03", title: "Heavy weather", type: "Hip-hop study", mood: "Cobalt · tobacco · chrome",
-    cover: `${BASE_PATH}/heavy-weather-cover.png`,
-    bouquets: { fresh: `${BASE_PATH}/heavy-weather-bouquet.png`, preserved: `${BASE_PATH}/heavy-weather-preserved.png` },
+    cover: `${BASE_PATH}/heavy-weather-cover.webp`,
+    bouquets: { fresh: `${BASE_PATH}/heavy-weather-bouquet.webp`, preserved: `${BASE_PATH}/heavy-weather-preserved.webp` },
     recipes: {
       fresh: [["Delphinium", "line · 5 stems"], ["Cymbidium", "focal · 4 stems"], ["Eryngium", "texture · 6 stems"], ["Anthurium", "structure · 2 stems"], ["Silver palm", "accent · 2 stems"]],
       preserved: [["Cobalt hydrangea", "volume · 2 heads"], ["Banksia", "focal · 3 stems"], ["Sola orchid", "light · 5 blooms"], ["Globe thistle", "texture · 7 stems"], ["Dried palm", "structure · 4 stems"]],
@@ -46,8 +46,8 @@ const STYLES: Record<StyleId, {
   },
   moss: {
     index: "04", title: "Moss memory", type: "Indie study", mood: "Moss · parchment · faded blue",
-    cover: `${BASE_PATH}/moss-memory-cover.png`,
-    bouquets: { fresh: `${BASE_PATH}/moss-memory-bouquet.png`, preserved: `${BASE_PATH}/moss-memory-preserved.png` },
+    cover: `${BASE_PATH}/moss-memory-cover.webp`,
+    bouquets: { fresh: `${BASE_PATH}/moss-memory-bouquet.webp`, preserved: `${BASE_PATH}/moss-memory-preserved.webp` },
     recipes: {
       fresh: [["Hellebore", "focal · 5 stems"], ["Cosmos", "light · 6 stems"], ["Delphinium", "line · 3 stems"], ["Olive", "foliage · 5 stems"], ["Moss", "texture · 3 clusters"]],
       preserved: [["Sage hydrangea", "volume · 3 heads"], ["Sola cosmos", "focal · 4 stems"], ["Dried delphinium", "line · 3 stems"], ["Preserved olive", "foliage · 5 stems"], ["Moss", "texture · 4 clusters"]],
