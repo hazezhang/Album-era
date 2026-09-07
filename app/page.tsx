@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { ArrowDown, Flower2, ImagePlus, RotateCcw } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
+import { ArrowDown, Check, Download, Flower2, ImagePlus, RotateCcw, Sparkles } from "lucide-react";
 import {
   Carousel,
   CarouselContent,
@@ -11,6 +11,8 @@ import {
 } from "@/components/ui/carousel";
 
 type Mode = "fresh" | "preserved";
+type Recipe = [string, string][];
+type Preset = { name: string; bouquet: string; rgb: number[]; recipe: Recipe; shape: string };
 const FALLBACK = ["#477aa7", "#e5d29b", "#8d502c", "#9db8c1", "#182a3b"];
 const RECIPES: Record<Mode, [string, string][]> = {
   fresh: [
@@ -22,6 +24,18 @@ const RECIPES: Record<Mode, [string, string][]> = {
     ["Preserved hydrangea", "volume · 3 heads"], ["Sola wood rose", "focal · 5 stems"],
     ["Banksia", "structure · 3 stems"], ["Dyed ruscus", "line · 4 stems"],
     ["Palm spear", "accent · 1 stem"],
+  ],
+};
+
+const PRESETS: Record<Mode, Preset[]> = {
+  fresh: [
+    { name: "Blue hour", bouquet: "/time-machine-fresh.png", rgb: [71, 122, 167], recipe: RECIPES.fresh, shape: "Airy asymmetrical cascade with a soft focal cluster." },
+    { name: "Cherry pulse", bouquet: "/cherry-static-bouquet.png", rgb: [178, 45, 65], recipe: [["Anthurium", "focal · 3 stems"], ["Ranunculus", "secondary · 7 stems"], ["Oriental lily", "volume · 2 stems"], ["Silver brunia", "texture · 4 stems"], ["Oxblood foliage", "line · 5 stems"]], shape: "Graphic fan silhouette with sharp red focal points." },
+    { name: "Electric dusk", bouquet: "/heavy-weather-bouquet.png", rgb: [43, 77, 138], recipe: [["Delphinium", "line · 5 stems"], ["Cymbidium", "focal · 3 stems"], ["Eryngium", "texture · 5 stems"], ["Anthurium", "accent · 2 stems"], ["Silver palm", "structure · 2 stems"]], shape: "Tall, directional silhouette with metallic accents." },
+  ],
+  preserved: [
+    { name: "Blue relic", bouquet: "/time-machine-preserved.png", rgb: [91, 117, 137], recipe: RECIPES.preserved, shape: "Sculptural asymmetry with a dense preserved centre." },
+    { name: "Moss memory", bouquet: "/moss-memory-bouquet.png", rgb: [94, 105, 72], recipe: [["Preserved hydrangea", "volume · 3 heads"], ["Sola hellebore", "focal · 5 stems"], ["Dried cosmos", "secondary · 6 stems"], ["Olive branch", "line · 4 stems"], ["Preserved moss", "texture · 2 bunches"]], shape: "Low organic crescent with a weathered garden texture." },
   ],
 };
 
@@ -88,6 +102,18 @@ async function readCover(file: File) {
   return { src, palette: selected.length >= 3 ? selected.map(hex) : FALLBACK };
 }
 
+function rgbFromHex(value: string) {
+  return [1, 3, 5].map((start) => parseInt(value.slice(start, start + 2), 16));
+}
+
+function closestPreset(mode: Mode, palette: string[]) {
+  const colours = palette.map(rgbFromHex);
+  return [...PRESETS[mode]].sort((a, b) => {
+    const score = (preset: Preset) => Math.min(...colours.map((colour) => gap(colour, preset.rgb)));
+    return score(a) - score(b);
+  })[0];
+}
+
 export default function Home() {
   const input = useRef<HTMLInputElement>(null);
   const [cover, setCover] = useState<string | null>(null);
@@ -95,7 +121,9 @@ export default function Home() {
   const [palette, setPalette] = useState(FALLBACK);
   const [mode, setMode] = useState<Mode>("fresh");
   const [reading, setReading] = useState(false);
+  const [building, setBuilding] = useState(false);
   const [ready, setReady] = useState(false);
+  const result = useMemo(() => closestPreset(mode, palette), [mode, palette]);
 
   async function select(file?: File) {
     if (!file) return; setReading(true); setReady(false);
@@ -107,6 +135,31 @@ export default function Home() {
   function reset() {
     setCover(null); setName("Time machine study"); setPalette(FALLBACK); setReady(false);
     if (input.current) input.current.value = "";
+  }
+
+  async function build() {
+    if (!cover) return;
+    setBuilding(true); setReady(false);
+    await new Promise((resolve) => window.setTimeout(resolve, 900));
+    setBuilding(false); setReady(true);
+    window.setTimeout(() => document.querySelector("#result")?.scrollIntoView({ behavior: "smooth" }), 50);
+  }
+
+  async function downloadCard() {
+    if (!cover || !ready) return;
+    const canvas = document.createElement("canvas"); canvas.width = 1400; canvas.height = 900;
+    const context = canvas.getContext("2d"); if (!context) return;
+    const load = (src: string) => new Promise<HTMLImageElement>((resolve, reject) => { const image = new Image(); image.onload = () => resolve(image); image.onerror = reject; image.src = src; });
+    const [sourceImage, bouquetImage] = await Promise.all([load(cover), load(result.bouquet)]);
+    context.fillStyle = "#eee9dc"; context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "#171916"; context.font = "24px Arial"; context.fillText("ALBUM / BOUQUET · FLORIST REFERENCE", 70, 70);
+    context.font = "56px Georgia"; context.fillText(name.slice(0, 34), 70, 145);
+    context.drawImage(sourceImage, 70, 205, 310, 310); context.drawImage(bouquetImage, 420, 205, 520, 520);
+    palette.forEach((colour, index) => { context.fillStyle = colour; context.fillRect(70 + index * 62, 535, 62, 52); });
+    context.fillStyle = "#171916"; context.font = "22px Arial"; context.fillText(`${mode.toUpperCase()} · ${result.name.toUpperCase()}`, 990, 225);
+    result.recipe.forEach(([flower, role], index) => { context.font = "25px Georgia"; context.fillText(`${String(index + 1).padStart(2, "0")}  ${flower}`, 990, 290 + index * 82); context.font = "17px Arial"; context.fillStyle = "#656861"; context.fillText(role, 1032, 318 + index * 82); context.fillStyle = "#171916"; });
+    context.font = "18px Arial"; context.fillText(result.shape, 70, 790);
+    const link = document.createElement("a"); link.download = `${name || "album"}-bouquet-card.png`; link.href = canvas.toDataURL("image/png"); link.click();
   }
 
   return (
@@ -182,20 +235,25 @@ export default function Home() {
           <button className={mode === "fresh" ? "active" : ""} role="radio" aria-checked={mode === "fresh"} onClick={() => { setMode("fresh"); setReady(false); }}><span>01</span><strong>Fresh flowers</strong><small>Seasonal, fragrant, alive. Includes florist substitutions.</small></button>
           <button className={mode === "preserved" ? "active" : ""} role="radio" aria-checked={mode === "preserved"} onClick={() => { setMode("preserved"); setReady(false); }}><span>02</span><strong>Preserved flowers</strong><small>Long-lasting, sculptural and easier to recreate as a gift.</small></button>
         </div>
-        <button className="build" disabled={!cover || reading} onClick={() => setReady(true)}>Build the florist brief <ArrowDown /></button>
+        <button className="build" disabled={!cover || reading || building} onClick={build}>{building ? "Translating colour, contrast & mood…" : "Generate my bouquet"} {building ? <Sparkles className="spin" /> : <ArrowDown />}</button>
         {!cover && <small className="hint">Upload a cover to build your first brief.</small>}
       </section>
 
+      <section className={`result-stage ${ready ? "visible" : ""}`} id="result" aria-live="polite">
+        <div className="result-copy"><p className="eyebrow">03 / GENERATED BOUQUET</p><h2>{ready ? result.name : "Your bouquet will appear here."}</h2><p>{ready ? "Matched from the cover’s dominant palette, contrast and visual weight." : "Upload a cover and choose a material to begin."}</p>{ready && <div className="result-checks"><span><Check /> Palette inherited</span><span><Check /> Florist-buildable</span><span><Check /> No visible generation artefacts</span></div>}</div>
+        <div className="result-image">{ready ? <img src={result.bouquet} alt={`${result.name} generated ${mode} bouquet`} /> : <div><Flower2 /><span>AWAITING COVER</span></div>}<b>{ready ? `${mode.toUpperCase()} / MATCHED STUDY` : "03 / RESULT"}</b></div>
+      </section>
+
       <section className="brief" id="brief">
-        <div className="brief-copy"><p className="eyebrow">FLORIST REFERENCE</p><h2>A clear recipe,<br />not just an AI image.</h2><p>The card preserves the cover’s colour hierarchy and translates it into materials a florist can source or substitute.</p></div>
+        <div className="brief-copy"><p className="eyebrow">04 / FLORIST REFERENCE</p><h2>A clear recipe,<br />not just an image.</h2><p>The downloadable card preserves the cover’s colour hierarchy and translates it into materials a florist can source or substitute.</p></div>
         <article className={`card ${ready ? "ready" : ""}`}>
           <header><div><small>BOUQUET STUDY</small><h3>{name}</h3></div><code>{mode === "fresh" ? "FRESH / 01" : "PRESERVED / 02"}</code></header>
           <div className="card-body">
             <div className="source">{cover ? <img src={cover} alt="Source cover" /> : <div />}<span>{palette.map((colour, i) => <i key={`${colour}-card-${i}`} style={{ background: colour }} />)}</span></div>
-            <div className="recipe"><small>MATERIAL RECIPE</small>{RECIPES[mode].map(([flower, role], i) => <div key={flower}><code>{String(i + 1).padStart(2, "0")}</code><strong>{flower}</strong><span>{role}</span></div>)}</div>
+            <div className="recipe"><small>MATERIAL RECIPE</small>{result.recipe.map(([flower, role], i) => <div key={flower}><code>{String(i + 1).padStart(2, "0")}</code><strong>{flower}</strong><span>{role}</span></div>)}</div>
           </div>
-          <footer><div><small>COLOUR RATIO</small><p>45% dominant · 25% light · 20% secondary · 10% accent</p></div><div><small>SHAPE</small><p>Asymmetrical, open silhouette with one clear focal cluster.</p></div></footer>
-          <button disabled={!ready}>{ready ? "Reference card ready" : "Preview unlocks after upload"}</button>
+          <footer><div><small>COLOUR RATIO</small><p>45% dominant · 25% light · 20% secondary · 10% accent</p></div><div><small>SHAPE</small><p>{result.shape}</p></div></footer>
+          <button className="download" disabled={!ready} onClick={downloadCard}>{ready ? <><Download /> Download florist card</> : "Preview unlocks after generation"}</button>
         </article>
       </section>
     </main>
