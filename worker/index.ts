@@ -35,14 +35,27 @@ type BouquetAnalysis = {
 
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const ALLOWED_ORIGINS = new Set([
+  "https://album-era.hazellfish-z.chatgpt.site",
+  "https://hazezhang.github.io",
+  "http://localhost:3000",
+  "http://localhost:5173",
+]);
+const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
+const RATE_LIMIT_MAX_REQUESTS = 3;
+const generationRequests = new Map<string, number[]>();
+
+function isAllowedOrigin(request: Request) {
+  return ALLOWED_ORIGINS.has(request.headers.get("Origin") ?? "");
+}
 
 function corsHeaders(request: Request) {
   const origin = request.headers.get("Origin") ?? "";
-  const allowed = origin === "https://hazezhang.github.io" || origin === "http://localhost:3000" || origin === "http://localhost:5173";
   return {
-    "Access-Control-Allow-Origin": allowed ? origin : "https://hazezhang.github.io",
+    ...(ALLOWED_ORIGINS.has(origin) ? { "Access-Control-Allow-Origin": origin } : {}),
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
+    "Cache-Control": "no-store",
     "Vary": "Origin",
   };
 }
@@ -133,9 +146,18 @@ async function generateBouquet(image: File, mode: BouquetMode, analysis: Bouquet
 }
 
 async function handleGenerate(request: Request, env: Env) {
+  if (!isAllowedOrigin(request)) return jsonResponse(request, { error: "Origin not allowed." }, 403);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
   if (request.method !== "POST") return jsonResponse(request, { error: "Method not allowed." }, 405);
   if (!env.OPENAI_API_KEY) return jsonResponse(request, { error: "Generation service is not configured.", code: "NOT_CONFIGURED" }, 503);
+  const now = Date.now();
+  const clientId = request.headers.get("CF-Connecting-IP") ?? "unknown";
+  const recentRequests = (generationRequests.get(clientId) ?? []).filter((timestamp) => now - timestamp < RATE_LIMIT_WINDOW_MS);
+  if (recentRequests.length >= RATE_LIMIT_MAX_REQUESTS) {
+    return jsonResponse(request, { error: "Too many generations. Please try again in a few minutes." }, 429);
+  }
+  recentRequests.push(now);
+  generationRequests.set(clientId, recentRequests);
   try {
     const form = await request.formData();
     const image = form.get("image");
