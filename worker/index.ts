@@ -30,9 +30,14 @@ type BouquetAnalysis = {
   density: number;
   negativeSpace: number;
   warmth: number;
+  darkMass: number;
   mood: string;
   composition: string;
   shape: string;
+  structuralMotif: string;
+  materialLanguage: string;
+  culturalStyle: string;
+  clicheRisks: string;
   rationale: string;
   recipe: Array<{ flower: string; role: string; quantity: string }>;
 };
@@ -101,6 +106,7 @@ function cleanAnalysis(value: unknown): BouquetAnalysis {
   const density = number("density", 50);
   const negativeSpace = number("negativeSpace", 50);
   const warmth = number("warmth", 50);
+  const darkMass = number("darkMass", 25);
   const derivedMood = [
     brightness < 35 ? "nocturnal" : brightness > 68 ? "luminous" : "muted",
     contrast > 70 ? "dramatic" : contrast < 35 ? "soft" : "rhythmic",
@@ -111,8 +117,12 @@ function cleanAnalysis(value: unknown): BouquetAnalysis {
     signatureColorRole: text("signatureColorRole", "the image's most identity-defining chromatic signal"),
     accentColor,
     accentColorRole: text("accentColorRole", "a small but memorable contrasting signal"),
-    brightness, contrast, density, negativeSpace, warmth, mood: text("mood", derivedMood),
+    brightness, contrast, density, negativeSpace, warmth, darkMass, mood: text("mood", derivedMood),
     composition: text("composition", "balanced asymmetry"), shape: text("shape", "Airy, asymmetric hand-tied silhouette."),
+    structuralMotif: text("structuralMotif", "an off-centre focal mass interrupted by one dark line and one open void"),
+    materialLanguage: text("materialLanguage", "matte botanicals contrasted with one translucent or reflective surface"),
+    culturalStyle: text("culturalStyle", "contemporary editorial still life"),
+    clicheRisks: text("clicheRisks", "symmetrical retail bouquet, predictable colour-matched roses, decorative filler and gift-shop wrapping"),
     rationale: text("rationale", "The bouquet translates the source image's visual hierarchy and atmosphere."), recipe,
   };
 }
@@ -123,14 +133,14 @@ async function analyseReference(image: File, mode: BouquetMode, apiKey: string, 
     for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
     return btoa(binary);
   });
-  const prompt = `You are an art director and expert florist. Analyse this image as a visual system to translate into a ${mode} flower bouquet. Do not merely list colours. Read dominant/secondary/accent colour ratios, light-dark distribution, contrast rhythm, density, negative-space placement, directional movement, depth and emotional temperature. Identify the single signature colour that carries the image's identity; it may be a saturated chromatic signal rather than the colour covering the most pixels. Also identify the small contrasting accent colour that acts as the image's emotional punctuation and must not disappear. Match that accent hue literally: distinguish orange or amber from red and yellow, and never substitute one merely because all are warm. Choose realistic ${mode} botanical materials that a florist can source. The recipe must assign the signature colour family to one mass flower and one line flower, with dark/midtone variants carrying most of its area; assign the accent colour to one to three small focal blooms rather than berries unless repeated berry-like dots are an essential source motif. Pale neutrals may not be the primary mass unless the signature colour itself is neutral. Return only valid JSON with exactly these keys: title (short evocative English name), palette (five lowercase #rrggbb colours ordered dominant to accent), signatureColor (one lowercase #rrggbb colour), signatureColorRole (why and where it defines the image), accentColor (one lowercase #rrggbb colour), accentColorRole (why its small contrast matters), brightness, contrast, density, negativeSpace, warmth (integers 0-100), mood (three concise descriptors), composition, shape, rationale (max 45 words), recipe (five objects with flower, role, quantity). Avoid invented species.`;
+  const prompt = `You are an art director and expert florist. Analyse this image as a visual system to translate into a ${mode} editorial flower bouquet. Do not merely list colours or convert each colour into an obvious matching flower. Read dominant/secondary/accent colour ratios, the proportion and location of dark visual mass, light-dark distribution, contrast rhythm, density, negative-space placement, directional movement, depth, graphic geometry and emotional temperature. Identify the single signature colour that carries the image's identity; it may be a saturated chromatic signal rather than the colour covering the most pixels. Also identify the small contrasting accent colour that acts as the image's emotional punctuation and must not disappear. Match that accent hue literally: distinguish orange or amber from red and yellow, and never substitute one merely because all are warm. Describe the source's STRUCTURAL MOTIF: the strongest silhouette, crop, diagonal, frame, void, repetition or tension that should determine the bouquet's architecture. Describe its MATERIAL LANGUAGE: matte versus glossy, opaque versus transparent, soft versus hard, organic versus synthetic and any reflected-light quality. Describe its CULTURAL STYLE: era, music/fashion/editorial energy and degree of polish without naming or reproducing a person. Name the specific CLICHE RISKS that would make this source become a generic florist product. Choose realistic ${mode} botanical and limited florist construction materials that can carry those shapes and surfaces. Do not default to hydrangea, roses or colour-matched wrapping merely because they are easy palette matches. The recipe must assign the signature colour family to a shape-bearing material, preserve the dark mass with a real structural role when it is visually important, and assign the accent colour to one to three precise focal events. Pale neutrals may not become the primary mass unless the signature colour itself is neutral. Return only valid JSON with exactly these keys: title (short evocative English name), palette (five lowercase #rrggbb colours ordered dominant to accent), signatureColor (one lowercase #rrggbb colour), signatureColorRole (why and where it defines the image), accentColor (one lowercase #rrggbb colour), accentColorRole (why its small contrast matters), brightness, contrast, density, negativeSpace, warmth, darkMass (integers 0-100), mood (three concise descriptors), composition, shape, structuralMotif, materialLanguage, culturalStyle, clicheRisks, rationale (max 45 words), recipe (five objects with flower, role, quantity). Avoid invented species and decorative props.`;
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model,
       input: [{ role: "user", content: [{ type: "input_text", text: prompt }, { type: "input_image", image_url: `data:${image.type};base64,${encoded}`, detail: "high" }] }],
-      max_output_tokens: 1200,
+      max_output_tokens: 1600,
     }),
   });
   if (!response.ok) throw new Error(`Vision analysis failed (${response.status}).`);
@@ -147,7 +157,17 @@ async function generateBouquet(image: File, mode: BouquetMode, analysis: Bouquet
   form.append("quality", "medium");
   form.append("output_format", "jpeg");
   form.append("output_compression", "88");
-  form.append("prompt", `Create one photorealistic editorial product photograph of a professionally constructed ${mode} hand-tied flower bouquet. The supplied image is a visual reference, not an object or scene to copy. Preserve its visual relationships: palette ${analysis.palette.join(", ")} in dominant-to-accent order; brightness ${analysis.brightness}/100; contrast ${analysis.contrast}/100; density ${analysis.density}/100; negative space ${analysis.negativeSpace}/100; mood ${analysis.mood}; composition ${analysis.composition}; silhouette ${analysis.shape}. COLOUR HIERARCHY: ${analysis.signatureColor} is the signature colour because ${analysis.signatureColorRole}. It must be immediately recognisable but restrained, occupying roughly 35–45% of the visible flower area through one cohesive mass and one line gesture. Build that colour as a tonal ladder: most of its area in dark and mid-value versions, only 20–30% of that colour area at full chroma, and a few luminous highlights. Never make a whole bouquet uniformly neon, emissive, glossy or maximum saturation. ACCENT LOCK: ${analysis.accentColor} matters because ${analysis.accentColorRole}; preserve its exact hue as a clearly visible 3–5% punctuation in one to three tight focal blooms. Do not shift orange toward red or yellow, and do not replace focal blooms with berry clusters unless the source specifically demands repeated dots. The accent must survive at thumbnail size without becoming a second main colour. Keep pale neutrals around 10–15% as controlled reflections. BACKGROUND LOCK: isolate the bouquet against one seamless matte studio background using the darkest palette colour, either solid or with only an extremely subtle shapeless tonal gradient. The only other visible elements may be the bouquet's coherent wrapping and a soft natural contact shadow. Translate weather, place and atmosphere only through the bouquet's colour, material, density and lighting—never reconstruct the source scene. No scenery, streets, wet pavement, floor reflections, architecture, landscape, plants outside the bouquet, fog, rain, bokeh, light orbs, windows, furniture, textural surfaces, decorative objects or props. Use exactly this feasible material direction: ${analysis.recipe.map((item) => `${item.flower} (${item.quantity}, ${item.role})`).join("; ")}. Make the connection to the source immediately legible through colour proportion, tonal hierarchy, spatial rhythm, density zones, directional movement and emotional atmosphere—not through literal objects, text or logos. Botanical realism is mandatory: anatomically correct petals, clean separate stems, plausible branching, natural material surfaces, coherent wrapping and gravity. No malformed or fused petals, broken or duplicated stems, plastic/waxy texture, impossible flower species, floating elements, hands, people, vase, text, logo, watermark or decorative props.`);
+  form.append("prompt", `Create one photorealistic editorial studio photograph of a professionally constructed ${mode} hand-tied flower bouquet. The supplied image is a visual reference, not an object, face or scene to copy. This must feel like a fashion or album-cover art direction translated into flowers, never a conventional gift-shop bouquet.
+
+VISUAL THESIS: ${analysis.culturalStyle}. Structural motif: ${analysis.structuralMotif}. Material language: ${analysis.materialLanguage}. Rebuild those relationships physically through the bouquet's silhouette, voids, planes, line gestures and surfaces. Preserve palette ${analysis.palette.join(", ")} in dominant-to-accent order; brightness ${analysis.brightness}/100; contrast ${analysis.contrast}/100; density ${analysis.density}/100; negative space ${analysis.negativeSpace}/100; dark visual mass ${analysis.darkMass}/100; mood ${analysis.mood}; composition ${analysis.composition}; silhouette ${analysis.shape}. Do not make colour matching the only connection.
+
+ANTI-GENERIC COMPOSITION: use a deliberately asymmetric, off-centre editorial silhouette with one unmistakable graphic interruption, one controlled negative-space opening and no evenly distributed ring of flowers. Avoid these source-specific clichés: ${analysis.clicheRisks}. No default round hydrangea centre, evenly spaced roses, supermarket filler, pastel-on-pastel sweetness, symmetrical dome, bridal styling, or colour-matched wrapping used as a substitute for floral design. Wrapping must act as one or two clean graphic planes, not layered decorative ruffles.
+
+COLOUR AND SHADOW: ${analysis.signatureColor} is the signature colour because ${analysis.signatureColorRole}; make it immediately recognisable through one concentrated shape-bearing gesture, not a uniform wash. Preserve the darkest palette colour as a substantial matte structural anchor or deep internal void in proportion to the source's ${analysis.darkMass}/100 dark mass; do not brighten it away. Build the main colour as a tonal ladder with dark and mid-value versions carrying most of the area and only a few luminous highlights. ${analysis.accentColor} matters because ${analysis.accentColorRole}; preserve its exact hue as a visible 3–5% punctuation in one to three precise focal events. It must survive at thumbnail size without becoming a second main colour.
+
+MATERIAL TENSION: include at least one hard, clean or reflective/transparent florist material only where supported by the stated material language, contrasted against believable botanical softness. Use it as structure or reflected-light rhythm, never as a decorative prop. Use this feasible material direction: ${analysis.recipe.map((item) => `${item.flower} (${item.quantity}, ${item.role})`).join("; ")}.
+
+BACKGROUND LOCK: isolate the bouquet against one seamless matte studio background using the darkest palette colour, solid or with only an extremely subtle shapeless tonal gradient. The only other visible elements may be coherent wrapping and a soft natural contact shadow. No scenery, architecture, landscape, plants outside the bouquet, fog, rain, bokeh, light orbs, windows, furniture, textural surfaces, decorative objects or props. Botanical realism is mandatory: anatomically correct petals, clean separate stems, plausible branching, natural surfaces, coherent wrapping and gravity. No malformed or fused petals, broken or duplicated stems, impossible species, floating elements, hands, people, faces, vase, text, logo or watermark.`);
   const response = await fetch("https://api.openai.com/v1/images/edits", {
     method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form,
   });
