@@ -178,6 +178,55 @@ BACKGROUND LOCK: isolate the bouquet against one seamless matte studio backgroun
   return `data:image/jpeg;base64,${base64}`;
 }
 
+
+type MaterialReading = { materials: string[]; palette: string[]; composition: string; textures: string; mood: string; botanicalDirection: string; poem: string };
+async function analyseMaterials(image: File, apiKey: string, model: string): Promise<MaterialReading> {
+  const bytes = new Uint8Array(await image.arrayBuffer());
+  let encoded = ""; for (let i = 0; i < bytes.length; i += 0x8000) encoded += String.fromCharCode(...bytes.subarray(i, i+0x8000));
+  const res = await fetch("https://api.openai.com/v1/responses", {
+    method:"POST", headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},
+    body:JSON.stringify({model,input:[{role:"user",content:[
+      {type:"input_text",text:`Exhibition art direction: analyze an overhead photograph of physical texture samples arranged by a visitor. The materials, not any people, are the subject. Describe only what is visually supported. Explain spatial arrangement (overlap, rhythm, orientation, negative space), tactile contrast (soft/hard, matte/shiny, transparent/opaque), dominant/secondary/small accent colors, and emotional impression. Translate these properties into a REALISTIC hand-tied florist-feasible editorial botanical composition, with natural flowers, stems, simple wrapping. Do not copy the physical samples as extraneous props or invent black nets or impossible materials. One neutral matte seamless studio background; restrained color; tiny accent if present. Return JSON object with fields materials (array 1-6 short identified material phrases), palette (array of 3-5 lowercase hex colors), composition, textures, mood, botanicalDirection, poem (one short ORIGINAL English poetic line, not a quote). JSON only.`},
+      {type:"input_image",image_url:`data:${image.type};base64,${btoa(encoded)}`,detail:"high"}
+    ]}],max_output_tokens:900})
+  });
+  if(!res.ok) throw new Error(`Material recognition failed (${res.status}).`);
+  const data=await res.json() as {output?:Array<{content?:Array<{type?:string;text?:string}>}>};
+  const parsed=JSON.parse(responseText(data).replace(/^```json\\s*/i,"").replace(/\\s*```$/,"")) as Record<string,unknown>;
+  const string=(key:string)=>typeof parsed[key]==="string" ? String(parsed[key]).slice(0,380):"";
+  const materials=Array.isArray(parsed.materials)?parsed.materials.filter((x):x is string=>typeof x==="string").slice(0,6):[];
+  const palette=Array.isArray(parsed.palette)?parsed.palette.filter((x):x is string=>typeof x==="string"&&/^#[0-9a-f]{6}$/i.test(x)).slice(0,5):[];
+  if(!materials.length||palette.length<3||!string("composition")||!string("botanicalDirection")) throw new Error("Material interpretation was incomplete.");
+  return {materials,palette,composition:string("composition"),textures:string("textures"),mood:string("mood"),botanicalDirection:string("botanicalDirection"),poem:string("poem")};
+}
+async function renderMaterialBouquet(reading: MaterialReading, apiKey: string) {
+  const prompt=`Create a single editorial studio PHOTO of a physically feasible hand-tied flower bouquet, inspired by material samples but NOT depicting them. Florist construction using plausible natural or preserved blooms, normal stems, minimal wrapping, no black mesh or fantasy plants. Interpret: ${reading.botanicalDirection}. Spatial composition: ${reading.composition}. Tactile language: ${reading.textures}. Emotion: ${reading.mood}. Palette: ${reading.palette.join(", ")}. Maintain dark-to-mid tonal hierarchy, restrained saturated highlights, 3-5% small accent if visually supported, legible negative space and asymmetry. One uniform matte pale-grey studio backdrop, gentle contact shadow, bouquet centred with margins, isolated. No props, text, hands, vase, scenery, reflections, gradients or graphic decoration. Realistic botanical anatomy and stems. Contemporary editorial floral sculpture rather than generic luxury gift bouquet.`;
+  const form=new FormData();form.append("model","gpt-image-2");form.append("size","1024x1024");form.append("quality","medium");form.append("output_format","jpeg");form.append("output_compression","85");form.append("prompt",prompt);
+  const response=await fetch("https://api.openai.com/v1/images/generations",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`},body:form});
+  if(!response.ok) throw new Error(`Material bouquet generation failed (${response.status}).`);
+  const data=await response.json() as {data?:Array<{b64_json?:string}>};
+  if(!data.data?.[0]?.b64_json) throw new Error("Image model returned no bouquet.");
+  return `data:image/jpeg;base64,${data.data[0].b64_json}`;
+}
+async function handleMaterialTranslation(request:Request,env:Env) {
+  if(!isAllowedOrigin(request)) return jsonResponse(request,{error:"Origin not allowed."},403);
+  if(request.method==="OPTIONS") return new Response(null,{status:204,headers:corsHeaders(request)});
+  if(request.method!=="POST") return jsonResponse(request,{error:"Method not allowed."},405);
+  if(!env.OPENAI_API_KEY) return jsonResponse(request,{error:"AI generation has not been configured."},503);
+  const now=Date.now(),client=request.headers.get("CF-Connecting-IP")??"unknown";
+  const recent=(generationRequests.get(client)??[]).filter(t=>now-t<RATE_LIMIT_WINDOW_MS);
+  if(recent.length>=RATE_LIMIT_MAX_REQUESTS) return jsonResponse(request,{error:"Rate limit reached. Try again later."},429);
+  recent.push(now);generationRequests.set(client,recent);
+  try {
+    const form=await request.formData(),image=form.get("image");
+    if(!(image instanceof File)||!ALLOWED_IMAGE_TYPES.has(image.type)) return jsonResponse(request,{error:"Submit a JPEG, PNG or WebP photograph."},400);
+    if(image.size===0||image.size>MAX_UPLOAD_BYTES) return jsonResponse(request,{error:"Image must be between 1 byte and 8 MB."},413);
+    const reading=await analyseMaterials(image,env.OPENAI_API_KEY,env.OPENAI_VISION_MODEL??"gpt-5.4-mini");
+    const imageDataUrl=await renderMaterialBouquet(reading,env.OPENAI_API_KEY);
+    return jsonResponse(request,{imageDataUrl,reading});
+  } catch(error) {console.error("material_translation_failed",error);return jsonResponse(request,{error:error instanceof Error?error.message:"Generation failed."},502);}
+}
+
 async function handleGenerate(request: Request, env: Env) {
   if (!isAllowedOrigin(request)) return jsonResponse(request, { error: "Origin not allowed." }, 403);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
@@ -220,6 +269,8 @@ interface ExecutionContext {
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
+
+    if (url.pathname === "/api/material-translate") return handleMaterialTranslation(request, env);
 
     if (url.pathname === "/api/generate") return handleGenerate(request, env);
 
