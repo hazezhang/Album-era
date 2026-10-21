@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { ArrowRight, Printer, RotateCcw } from "lucide-react";
+import CameraTranslation from "./camera-translation";
 
 type Material = { id: string; name: string; cn: string; feel: string; color: string; accent: string; form: string };
 const MATERIALS: Material[] = [
@@ -49,6 +50,7 @@ export default function ExhibitionStudio() {
       <h2>Choose what you feel.<br/><em>Carry what it becomes.</em></h2>
       <p>Touch and arrange 2–3 materials at the installation table. This digital rehearsal translates their textures into a botanical form and a take-away receipt.</p>
     </div>
+    <CameraTranslation />
     <div className="exhibition-grid">
       <div className="exhibition-selector">
         <div className="exhibition-section-name"><span>01 / SELECT YOUR MATERIALS</span><span>{ids.length} / 3</span></div>
