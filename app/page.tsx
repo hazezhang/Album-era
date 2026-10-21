@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import ExhibitionStudio from "@/components/exhibition-studio";
 import { ArrowDown, Check, Download, Flower2, ImagePlus, RotateCcw, Sparkles } from "lucide-react";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel";
 
@@ -272,7 +273,7 @@ export default function Home() {
 
   return (
     <main>
-      <header className="topbar"><a className="wordmark" href="#studio"><Flower2 /> ALBUM / BOUQUET</a><span>INTERACTIVE DEMO · 002</span></header>
+      <header className="topbar"><a className="wordmark" href="#studio"><Flower2 /> ALBUM / BOUQUET</a><a href="#exhibition" style={{color:"inherit",textDecoration:"none"}}>VISIT EXHIBITION STUDIO ↗</a></header>
 
       <section className="studio" id="studio">
         <div className="intro">
@@ -335,6 +336,8 @@ export default function Home() {
           </article>
         </> : <div className="result-empty"><span>03</span><p>Your generated bouquet and florist brief will appear here.</p></div>}
       </section>
+
+      <ExhibitionStudio />
 
       <section className="demo-study" aria-labelledby="demo-title">
         <header><div><p className="eyebrow">TRANSLATION STUDIES · 001—004</p><h2 id="demo-title">A record shelf,<br />made botanical.</h2></div><p>Swipe across four music worlds. In every card, switch between fresh and preserved flowers without changing the cover.</p></header>
