@@ -20,10 +20,10 @@ const POEMS = [
   ["For a moment, let the ordinary become a little strange.", "让寻常之物，在这一刻稍稍变得陌生。"],
 ];
 const SIZE = 20;
-function PixelFlower({ selected }: { selected: Material[] }) {
-  const lead = selected[0] ?? MATERIALS[0];
-  const other = selected[1] ?? MATERIALS[2];
-  const last = selected[2] ?? MATERIALS[3];
+function PixelFlower({ selected, edition = 0 }: { selected: Material[]; edition?: number }) {
+  const lead = selected[edition % selected.length] ?? MATERIALS[0];
+  const other = selected[(edition + 1) % selected.length] ?? MATERIALS[2];
+  const last = selected[(edition + 2) % selected.length] ?? MATERIALS[3];
   const petals = [[7, 4], [9, 3], [11, 5], [9, 6], [5, 8], [7, 7], [9, 9], [11, 8], [13, 7], [12, 10], [6, 11], [8, 12], [10, 12]];
   return <svg viewBox={`0 0 ${SIZE} ${SIZE}`} shapeRendering="crispEdges" role="img" aria-label="Pixel bouquet generated from selected materials">
     {[[8, 10, 9, 17], [11, 9, 9, 17], [6, 11, 9, 17], [13, 10, 9, 17]].map(([x,y,xx,yy], i) => <path key={i} d={`M${x} ${y}L${xx} ${yy}`} stroke="#4e675d" strokeWidth=".6" />)}
@@ -61,16 +61,16 @@ export default function ExhibitionStudio() {
         <button className="exhibition-reset" onClick={reset} type="button"><RotateCcw size={15}/> Start again</button>
       </div>
       <div className="exhibition-result">
-        <div className="exhibition-section-name"><span>02 / TRANSLATED OBJECT</span><span>STUDY {String(edition + 1).padStart(2,"0")}</span></div>
+        <div className="exhibition-section-name"><span>02 / TRANSLATED OBJECT</span><span>STUDY {String(edition % 3 + 1).padStart(2,"0")}</span></div>
         <div className="exhibition-art">
-          {ready ? <PixelFlower selected={selected} /> : <div className="exhibition-empty"><span>✳</span><p>Every texture<br/>has a language.</p></div>}
+          {ready ? <PixelFlower selected={selected} edition={edition} /> : <div className="exhibition-empty"><span>✳</span><p>Every texture<br/>has a language.</p></div>}
         </div>
         <div className="exhibition-caption">
           <div><span className="exhibition-kicker">THE MATERIAL PALETTE</span><p>{ready ? selected.map(x=>x.name).join(" / ") : "Waiting for a combination"}</p></div>
           <div><span className="exhibition-kicker">COMPOSITION</span><p>{ready ? selected.map(x=>x.form).join(" · ") : "—"}</p></div>
         </div>
         <div className="exhibition-actions">
-          <button disabled={!ready} onClick={()=>setEdition(x=>x+1)} type="button">Create another edition <ArrowRight size={16}/></button>
+          <button disabled={!ready} onClick={()=>setEdition(x=>(x+1)%3)} type="button">Create another edition <ArrowRight size={16}/></button>
           <button disabled={!ready} onClick={()=>window.print()} type="button"><Printer size={16}/> Print receipt</button>
         </div>
         {ready && <p className="exhibition-notice">Preview only: the bouquet is a deterministic pixel illustration, not yet camera-driven AI generation. Browser printing is enabled.</p>}
@@ -78,8 +78,8 @@ export default function ExhibitionStudio() {
     </div>
     <div className="receipt-panel">
       <div><p className="eyebrow">03 / A SMALL MEMORY TO KEEP</p><h3>Your receipt,<br/>your poem.</h3><p>Designed for monochrome 58 mm thermal paper. A compact pixel silhouette and a short poetic line become a physical keepsake.</p><div className="receipt-language"><button className={language==="en"?"active":""} onClick={()=>setLanguage("en")}>EN</button><button className={language==="zh"?"active":""} onClick={()=>setLanguage("zh")}>中文</button></div></div>
-      <div className="receipt-paper" id="exhibition-receipt"><div className="receipt-top">A L B U M / B O U Q U E T</div><div className="receipt-rule">********************************</div><div className="receipt-id">MATERIAL STUDY / {String(edition+1).padStart(3,"0")}</div>
-        <div className="receipt-visual">{ready ? <PixelFlower selected={selected}/> : <div className="receipt-placeholder">[ YOUR FLOWERS HERE ]</div>}</div>
+      <div className="receipt-paper" id="exhibition-receipt"><div className="receipt-top">A L B U M / B O U Q U E T</div><div className="receipt-rule">********************************</div><div className="receipt-id">MATERIAL STUDY / {String(edition%3+1).padStart(3,"0")}</div>
+        <div className="receipt-visual">{ready ? <PixelFlower selected={selected} edition={edition}/> : <div className="receipt-placeholder">[ YOUR FLOWERS HERE ]</div>}</div>
         <p className="receipt-poem">{ready ? POEMS[index][language==="en"?0:1] : "A little something, made of feeling."}</p>
         <div className="receipt-rule">--------------------------------</div><div className="receipt-materials">{ready ? selected.map(x=>x.name.toUpperCase()).join(" + ") : "SELECT 2–3 MATERIALS"}</div><div className="receipt-footer">TAKE THIS MOMENT WITH YOU<br/>✳ THANK YOU FOR BEING HERE ✳</div>
       </div>
