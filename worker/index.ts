@@ -192,7 +192,7 @@ async function analyseMaterials(image: File, apiKey: string, model: string): Pro
   });
   if(!res.ok) throw new Error(`Material recognition failed (${res.status}).`);
   const data=await res.json() as {output?:Array<{content?:Array<{type?:string;text?:string}>}>};
-  const parsed=JSON.parse(responseText(data).replace(/^```json\\s*/i,"").replace(/\\s*```$/,"")) as Record<string,unknown>;
+  const parsed=JSON.parse(responseText(data).replace(/^```json\s*/i,"").replace(/\s*```$/,"")) as Record<string,unknown>;
   const string=(key:string)=>typeof parsed[key]==="string" ? String(parsed[key]).slice(0,380):"";
   const materials=Array.isArray(parsed.materials)?parsed.materials.filter((x):x is string=>typeof x==="string").slice(0,6):[];
   const palette=Array.isArray(parsed.palette)?parsed.palette.filter((x):x is string=>typeof x==="string"&&/^#[0-9a-f]{6}$/i.test(x)).slice(0,5):[];
