@@ -1,7 +1,7 @@
 "use client";
+import ExhibitionStudio from "@/components/exhibition-studio";
 
 import { useRef, useState } from "react";
-import ExhibitionStudio from "@/components/exhibition-studio";
 import { ArrowDown, Check, Download, Flower2, ImagePlus, RotateCcw, Sparkles } from "lucide-react";
 import { Carousel, CarouselContent, CarouselItem, CarouselNext, CarouselPrevious } from "@/components/ui/carousel";
 
@@ -25,9 +25,27 @@ type GeneratedAnalysis = VisualAnalysis & {
   rationale: string;
   recipe: Array<{ flower: string; role: string; quantity: string }>;
 };
-type GeneratedBouquet = { imageDataUrl: string; analysis: GeneratedAnalysis };
+type GeneratedQa = {
+  pass: boolean;
+  hardRejectReasons: string[];
+  referenceFidelity: string;
+  artDirection: string;
+  visualQuality: string;
+  feasibility: string;
+  backgroundConsistency: string;
+  primaryGestureVisible: boolean;
+  ordinaryFloristWouldNotDo: string;
+};
+type GeneratedBouquet = { imageDataUrl: string; analysis: GeneratedAnalysis; qa?: GeneratedQa; attempts?: number };
 const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
-const GENERATION_API_URL = process.env.NEXT_PUBLIC_GENERATION_API_URL ?? `${BASE_PATH}/api/generate`;
+const GENERATION_API_BASE = (process.env.NEXT_PUBLIC_GENERATION_API_URL ?? BASE_PATH).replace(/\/api\/generate$/, "").replace(/\/$/, "");
+
+async function postGenerationPhase<T>(phase: "analyse" | "render" | "qa", form: FormData) {
+  const response = await fetch(`${GENERATION_API_BASE}/api/${phase}`, { method: "POST", body: form });
+  const payload = await response.json().catch(() => ({})) as T & { error?: string };
+  if (!response.ok) throw new Error(payload.error || `${phase} failed.`);
+  return payload;
+}
 
 const FALLBACK = ["#477aa7", "#e5d29b", "#8d502c", "#9db8c1", "#182a3b"];
 const FALLBACK_ANALYSIS: VisualAnalysis = {
@@ -223,14 +241,54 @@ export default function Home() {
     setGenerating(true); setMatched(null); setGenerated(null); setGenerationError(null);
     setGenerationStep("Reading colour, light and spatial rhythm");
     try {
-      const form = new FormData(); form.append("image", sourceFile); form.append("mode", mode);
-      window.setTimeout(() => setGenerationStep("Building a reference-led bouquet"), 1800);
-      const response = await fetch(GENERATION_API_URL, { method: "POST", body: form });
-      const payload = await response.json().catch(() => ({})) as Partial<GeneratedBouquet> & { error?: string };
-      if (!response.ok || !payload.imageDataUrl || !payload.analysis) throw new Error(payload.error || "The live generator did not return a bouquet.");
-      setGenerationStep("Checking botanical structure");
-      setGenerated({ imageDataUrl: payload.imageDataUrl, analysis: payload.analysis });
-      setPalette(payload.analysis.palette); setAnalysis(payload.analysis);
+      const analyseForm = new FormData(); analyseForm.append("image", sourceFile); analyseForm.append("mode", mode);
+      const analysed = await postGenerationPhase<{ analysis: GeneratedAnalysis }>("analyse", analyseForm);
+      setPalette(analysed.analysis.palette); setAnalysis(analysed.analysis);
+
+      const render = async (revisionReasons: string[] = []) => {
+        const renderForm = new FormData();
+        renderForm.append("image", sourceFile); renderForm.append("mode", mode);
+        renderForm.append("analysis", JSON.stringify(analysed.analysis));
+        if (revisionReasons.length) renderForm.append("revisionReasons", JSON.stringify(revisionReasons));
+        return postGenerationPhase<{ imageDataUrl: string }>("render", renderForm);
+      };
+      const review = async (imageDataUrl: string) => {
+        const candidate = await fetch(imageDataUrl).then((response) => response.blob());
+        const qaForm = new FormData();
+        qaForm.append("image", sourceFile); qaForm.append("candidate", candidate, "candidate.jpg");
+        qaForm.append("analysis", JSON.stringify(analysed.analysis));
+        return postGenerationPhase<{ qa: GeneratedQa }>("qa", qaForm);
+      };
+
+      setGenerationStep("Building a reference-led bouquet");
+      let rendered = await render();
+      let attempts = 1;
+      let qa: GeneratedQa;
+      try {
+        setGenerationStep("Running visual art-direction QA");
+        qa = (await review(rendered.imageDataUrl)).qa;
+        if (!qa.pass) {
+          setGenerationStep("Revising a hard-rejected result");
+          rendered = await render(qa.hardRejectReasons.length ? qa.hardRejectReasons : ["Primary Gesture was not visible"]);
+          attempts = 2;
+          setGenerationStep("Checking the revised bouquet");
+          qa = (await review(rendered.imageDataUrl)).qa;
+        }
+      } catch (qaError) {
+        qa = {
+          pass: false,
+          hardRejectReasons: ["Automated Visual QA was unavailable"],
+          referenceFidelity: "Manual fidelity review is required.",
+          artDirection: "The bouquet was generated, but automated art-direction QA did not finish.",
+          visualQuality: "Visual quality was not automatically scored.",
+          feasibility: "Physical construction was not automatically verified.",
+          backgroundConsistency: "The fixed neutral-grey background was not automatically verified.",
+          primaryGestureVisible: false,
+          ordinaryFloristWouldNotDo: "Manual review must identify the distinctive compositional decision.",
+        };
+        console.warn(qaError);
+      }
+      setGenerated({ imageDataUrl: rendered.imageDataUrl, analysis: analysed.analysis, qa, attempts });
     } catch (error) {
       setMatched(matchStyle(palette, analysis));
       setGenerationError(error instanceof Error ? error.message : "Live generation failed.");
@@ -273,7 +331,7 @@ export default function Home() {
 
   return (
     <main>
-      <header className="topbar"><a className="wordmark" href="#studio"><Flower2 /> ALBUM / BOUQUET</a><a href="#exhibition" style={{color:"inherit",textDecoration:"none"}}>VISIT EXHIBITION STUDIO ↗</a></header>
+      <header className="topbar"><a className="wordmark" href="#studio"><Flower2 /> ALBUM / BOUQUET</a><a href={`${BASE_PATH}/demo`} style={{color:"inherit"}}>UPLOAD DEMO ↗</a></header>
 
       <section className="studio" id="studio">
         <div className="intro">
@@ -316,6 +374,7 @@ export default function Home() {
             <p className="eyebrow">YOUR BOUQUET · {mode.toUpperCase()} · {generated ? "LIVE GENERATION" : "FALLBACK STUDY"}</p><h2>{resultTitle}</h2>
             <p>{generated ? "Generated from the uploaded image as a high-fidelity visual reference." : <>Live generation was unavailable, so this is the closest <strong>{output?.type}</strong> case study.</>}</p>
             <div className="match-note"><small>VISUAL TRANSLATION</small><p>{generated?.analysis.rationale ?? `${analysis.mood}. The fallback carries over light level, contrast rhythm, density and negative space—not only colour.`}</p></div>
+            {generated?.qa && <div className="match-note"><small>VISUAL QA · {generated.qa.pass ? "PASSED" : "REVIEW"} · {generated.attempts ?? 1} ATTEMPT{(generated.attempts ?? 1) > 1 ? "S" : ""}</small><p>{generated.qa.artDirection} {generated.qa.feasibility} {generated.qa.backgroundConsistency}</p></div>}
             {generationError && <p className="generation-error">LIVE API FALLBACK · {generationError}</p>}
             <div className="result-palette">{palette.map((colour, index) => <i key={`${colour}-result-${index}`} style={{ background: colour }} />)}</div>
             <div className="result-actions"><button className="primary" onClick={downloadCard}><Download /> Download florist card</button><button onClick={reset}><RotateCcw /> Try another cover</button></div>
@@ -332,7 +391,7 @@ export default function Home() {
               <div className="recipe"><small>MATERIAL RECIPE</small>{resultRecipe.map(([flower, role], index) => <div key={`${flower}-${index}`}><code>{String(index + 1).padStart(2, "0")}</code><strong>{flower}</strong><span>{role}</span></div>)}</div>
             </div>
             <footer><div><small>COLOUR ORDER</small><p>Dominant → secondary → light → accent</p></div><div><small>SHAPE</small><p>{resultShape}</p></div></footer>
-            <div className="card-status"><Check /> {generated ? "API generated · ready for review" : "Fallback study · generation unavailable"}</div>
+            <div className="card-status"><Check /> {generated?.qa?.pass ? "API generated · Visual QA passed" : generated ? "API generated · manual review recommended" : "Fallback study · generation unavailable"}</div>
           </article>
         </> : <div className="result-empty"><span>03</span><p>Your generated bouquet and florist brief will appear here.</p></div>}
       </section>
