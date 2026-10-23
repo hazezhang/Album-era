@@ -134,3 +134,10 @@ test("product prompts and separate image-provider settings are replaceable", asy
   }, upload(), {...env, VISION_PROMPT:"Product-supplied JSON vision instructions", BOUQUET_IMAGE_PROMPT:"Product instruction: {{description}} / {{generationPrompt}}", OPENAI_IMAGE_BASE_URL:"https://image-gateway.example/v1", OPENAI_IMAGE_API_KEY:"image-only-key"});
   assert.equal(result.response.status,200);
 });
+
+
+test("classroom rate quota is configurable and still enforced", async () => {
+  const bucket = new Map(); const config = {...env,GENERATION_RATE_LIMIT:"1"};
+  assert.equal((await run(ok,upload(),config,{requests:bucket})).response.status,200);
+  assert.equal((await run(ok,upload(),config,{requests:bucket})).body.code,"RATE_LIMITED");
+});

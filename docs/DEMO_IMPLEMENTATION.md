@@ -48,6 +48,7 @@ Configure these in the existing Site's runtime settings, then redeploy:
 | `OPENAI_IMAGE_BASE_URL` | Optional separate image API root |
 | `OPENAI_IMAGE_API_KEY` | Optional separate image provider secret |
 | `VISION_PROMPT` | Replaceable product prompt; request concise JSON with the intermediate fields |
+| `GENERATION_RATE_LIMIT` | Attempts per IP per ten minutes, bounded to 1–10; default 3, classroom deployment configured to 5 to allow retries |
 | `BOUQUET_IMAGE_PROMPT` | Replaceable product image prompt; accepts `{{description}}` and `{{generationPrompt}}` |
 
 For GitHub Pages, the existing workflow sets `NEXT_PUBLIC_BASE_PATH=/Album-era`
@@ -64,7 +65,7 @@ Never put provider secrets into `NEXT_PUBLIC_*`, source, hosting manifests or lo
 - Failures include a safe code, stage, request ID, retryability and optional upstream
   status / Retry-After. Raw provider error bodies and uploaded images are not logged.
 - Retries are user-initiated. Paid provider POSTs are not automatically retried.
-- Three valid generation attempts per IP per ten minutes, best-effort per Worker
+- A configurable number of valid attempts per IP per ten minutes (default three), best-effort per Worker
   isolate. This is not a durable distributed quota. An upstream failure counts as an attempt.
 - A timeout can occur after a provider has begun work; retrying may incur another charge.
 
@@ -91,3 +92,26 @@ network failures, provider and application rate limits, CORS and configurable pr
 These are mocked provider tests, not evidence of real generation or model permissions.
 
 Live production results and browser limitations will be recorded after deployment.
+
+### Current verification results
+
+- TypeScript check and production build passed. Initial complete suite: 25 tests passed.
+- Production `/demo`: HTTP 200. Invalid file: HTTP 415 `UNSUPPORTED_IMAGE_TYPE`.
+- Real API run 1: `lunar-veil-cover.webp`, HTTP 200, 44.8 s; actual PNG output.
+- Real API run 2: `cherry-static-cover.webp`, HTTP 504, vision deadline at 45.7 s.
+- Real API run 3: `moss-memory-cover.webp`, HTTP 200, 35.3 s; actual PNG output.
+- Browser (local preview): invalid upload, valid preview, error classification and
+  explicit retry verified. Missing-secret retries returned different request IDs.
+- Browser display contract: a clearly labelled stub provider used recorded real
+  production image bytes. Image decoded successfully at 1254×1254; completion
+  appeared only after load. This is not a real-generation end-to-end run.
+- Production browser end-to-end acceptance: **0/3 verified**. The supported cloud
+  browser is limited to the supervised preview; that preview has no production
+  secrets and its outbound DNS failed with `EAI_AGAIN`. No mock is counted as acceptance.
+- Safari / classroom browser compatibility remains unverified.
+
+Reproduce production API-only checks with
+`node scripts/verify-live-demo.mjs --real`. This makes paid generation calls.
+Use `--input cherry-static-cover.webp --output-dir outputs/live-demo-retry` to retry
+only the failed fixture. The script records request IDs and timings, never keys or
+image contents in its JSON report. Image bytes are kept only as local QA outputs.

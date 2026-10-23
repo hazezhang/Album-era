@@ -10,6 +10,7 @@ export interface GenerationEnv {
   OPENAI_IMAGE_API_KEY?: string;
   VISION_PROMPT?: string;
   BOUQUET_IMAGE_PROMPT?: string;
+  GENERATION_RATE_LIMIT?: string;
 }
 
 type Fetcher = typeof fetch;
@@ -149,7 +150,9 @@ export async function handleGeneration(request: Request, env: GenerationEnv, opt
     const bucket = options.requests ?? requests; const client = request.headers.get("CF-Connecting-IP") ?? "unknown";
     for (const [key, values] of bucket) if (!values.some(t => now() - t < WINDOW_MS)) bucket.delete(key);
     const recent = (bucket.get(client) ?? []).filter(t => now() - t < WINDOW_MS);
-    if (recent.length >= 3) throw new Failure("RATE_LIMITED", "backend", "Please wait before starting another generation.", 429, true, undefined, Math.max(1, Math.ceil((recent[0] + WINDOW_MS - now()) / 1000)));
+    const configuredLimit = Number(env.GENERATION_RATE_LIMIT ?? 3);
+    const limit = Number.isFinite(configuredLimit) ? Math.min(10, Math.max(1, Math.floor(configuredLimit))) : 3;
+    if (recent.length >= limit) throw new Failure("RATE_LIMITED", "backend", "Please wait before starting another generation.", 429, true, undefined, Math.max(1, Math.ceil((recent[0] + WINDOW_MS - now()) / 1000)));
     if (bucket.size >= 10000 && !bucket.has(client)) throw new Failure("SERVICE_BUSY", "backend", "The generation service is busy. Please retry shortly.", 503, true);
     recent.push(now()); bucket.set(client, recent);
     const fetcher = options.fetcher ?? fetch; const visionStart = now();
