@@ -1,11 +1,22 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { handleGeneration, type GenerationEnv } from "./generation";
+import {
+  buildAnalysisPrompt,
+  buildGenerationPrompt,
+  buildQaPrompt,
+  type BouquetAnalysis,
+  type BouquetMode,
+  type BouquetQa,
+} from "./aesthetic-runtime";
 
-interface Env {
+interface Env extends GenerationEnv {
   ASSETS: Fetcher;
   DB: D1Database;
   OPENAI_API_KEY?: string;
+  OPENAI_BASE_URL?: string;
+  OPENAI_IMAGE_MODEL?: string;
   OPENAI_VISION_MODEL?: string;
   IMAGES: {
     input(stream: ReadableStream): {
@@ -16,32 +27,6 @@ interface Env {
   };
 }
 
-type BouquetMode = "fresh" | "preserved";
-
-type BouquetAnalysis = {
-  title: string;
-  palette: string[];
-  signatureColor: string;
-  signatureColorRole: string;
-  accentColor: string;
-  accentColorRole: string;
-  brightness: number;
-  contrast: number;
-  density: number;
-  negativeSpace: number;
-  warmth: number;
-  darkMass: number;
-  mood: string;
-  composition: string;
-  shape: string;
-  structuralMotif: string;
-  materialLanguage: string;
-  culturalStyle: string;
-  clicheRisks: string;
-  rationale: string;
-  recipe: Array<{ flower: string; role: string; quantity: string }>;
-};
-
 const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const ALLOWED_ORIGINS = new Set([
@@ -50,18 +35,30 @@ const ALLOWED_ORIGINS = new Set([
   "http://localhost:3000",
   "http://localhost:5173",
 ]);
+const DEV_ORIGINS = import.meta.env.DEV
+  ? new Set(["http://terminal.local:4173", "http://localhost:4173", "http://127.0.0.1:4173"])
+  : new Set<string>();
 const RATE_LIMIT_WINDOW_MS = 10 * 60 * 1000;
-const RATE_LIMIT_MAX_REQUESTS = 3;
 const generationRequests = new Map<string, number[]>();
 
+function apiBaseUrl(env: Env) {
+  const baseUrl = (env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1").replace(/\/+$/, "");
+  const url = new URL(baseUrl);
+  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
+    throw new Error("OPENAI_BASE_URL must be an HTTPS API base URL without credentials, query or fragment.");
+  }
+  return baseUrl;
+}
+
 function isAllowedOrigin(request: Request) {
-  return ALLOWED_ORIGINS.has(request.headers.get("Origin") ?? "");
+  const origin = request.headers.get("Origin") ?? "";
+  return ALLOWED_ORIGINS.has(origin) || DEV_ORIGINS.has(origin);
 }
 
 function corsHeaders(request: Request) {
   const origin = request.headers.get("Origin") ?? "";
   return {
-    ...(ALLOWED_ORIGINS.has(origin) ? { "Access-Control-Allow-Origin": origin } : {}),
+    ...(isAllowedOrigin(request) ? { "Access-Control-Allow-Origin": origin } : {}),
     "Access-Control-Allow-Methods": "POST, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Cache-Control": "no-store",
@@ -73,20 +70,45 @@ function jsonResponse(request: Request, value: unknown, status = 200) {
   return Response.json(value, { status, headers: corsHeaders(request) });
 }
 
-function responseText(payload: { output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }> }) {
-  for (const item of payload.output ?? []) {
-    for (const content of item.content ?? []) if (content.type === "output_text" && content.text) return content.text;
+type VisionResponse = {
+  status?: string;
+  incomplete_details?: { reason?: string };
+  output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>;
+};
+
+function responseText(payload: VisionResponse) {
+  if (payload.status === "incomplete") {
+    const reason = payload.incomplete_details?.reason;
+    throw new Error(reason === "max_output_tokens"
+      ? "Vision analysis exceeded its output budget. Please try again."
+      : "Vision model returned an incomplete response. Please try again.");
   }
-  throw new Error("Vision model returned no analysis text.");
+  const text = (payload.output ?? []).flatMap(item => item.content ?? [])
+    .filter(content => content.type === "output_text" && content.text)
+    .map(content => content.text).join("");
+  if (!text) throw new Error("Vision model returned no analysis text.");
+  return text;
+}
+
+async function fileDataUrl(image: File) {
+  const encoded = await image.arrayBuffer().then((buffer) => {
+    const bytes = new Uint8Array(buffer); let binary = "";
+    for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+    return btoa(binary);
+  });
+  return `data:${image.type};base64,${encoded}`;
 }
 
 function cleanAnalysis(value: unknown): BouquetAnalysis {
   if (!value || typeof value !== "object") throw new Error("Vision model returned invalid JSON.");
   const raw = value as Record<string, unknown>;
-  const number = (key: string, fallback: number) => Math.max(0, Math.min(100, Number(raw[key]) || fallback));
+  const number = (key: string, fallback: number) => {
+    const value = Number(raw[key]);
+    return Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : fallback;
+  };
   const text = (key: string, fallback: string) => typeof raw[key] === "string" && raw[key] ? String(raw[key]).slice(0, 280) : fallback;
   const palette = Array.isArray(raw.palette)
-    ? raw.palette.filter((item): item is string => typeof item === "string" && /^#[0-9a-f]{6}$/i.test(item)).slice(0, 5)
+    ? raw.palette.filter((item): item is string => typeof item === "string" && /^#[0-9a-f]{6}$/i.test(item)).slice(0, 4)
     : [];
   const recipe = Array.isArray(raw.recipe) ? raw.recipe.slice(0, 6).flatMap((item) => {
     if (!item || typeof item !== "object") return [];
@@ -113,62 +135,59 @@ function cleanAnalysis(value: unknown): BouquetAnalysis {
     warmth > 62 ? "warm" : warmth < 38 ? "cool" : density > 65 ? "lush" : negativeSpace > 58 ? "airy" : "balanced",
   ].join(" · ");
   return {
-    title: text("title", "Untitled arrangement"), palette, signatureColor,
+    title: text("title", "Untitled arrangement"), palette,
+    dominantColorWorld: text("dominantColorWorld", `${palette[0]} expressed through a dark, mid and light tonal ladder`),
+    supportingHue: text("supportingHue", palette[1] ?? palette[0]),
+    shadowNeutral: text("shadowNeutral", palette[2] ?? "soft neutral shadow"),
+    signatureColor,
     signatureColorRole: text("signatureColorRole", "the image's most identity-defining chromatic signal"),
     accentColor,
     accentColorRole: text("accentColorRole", "a small but memorable contrasting signal"),
     brightness, contrast, density, negativeSpace, warmth, darkMass, mood: text("mood", derivedMood),
-    composition: text("composition", "balanced asymmetry"), shape: text("shape", "Airy, asymmetric hand-tied silhouette."),
-    structuralMotif: text("structuralMotif", "an off-centre focal mass interrupted by one dark line and one open void"),
+    primaryGesture: text("primaryGesture", "one off-centre mass held against a deliberate open void"),
+    spatialLogic: text("spatialLogic", "off-axis"),
+    dominantTension: text("dominantTension", "soft botanical forms held against one clean graphic plane"),
+    composition: text("composition", "off-centre with deliberate negative space"), shape: text("shape", "A source-led sculptural silhouette."),
     materialLanguage: text("materialLanguage", "matte botanicals contrasted with one translucent or reflective surface"),
+    constructionPlan: text("constructionPlan", "All non-floral materials are wired or taped to stems and secured at one hand-held binding point."),
+    packaging: text("packaging", "one incomplete graphic plane placed where it reinforces the Primary Gesture"),
+    lightingBackground: text("lightingBackground", "a clean studio field matching the source brightness and temperature"),
     culturalStyle: text("culturalStyle", "contemporary editorial still life"),
-    clicheRisks: text("clicheRisks", "symmetrical retail bouquet, predictable colour-matched roses, decorative filler and gift-shop wrapping"),
+    humanInterferenceRemoved: text("humanInterferenceRemoved", "none, or incidental hair, skin and facial features when a person is present"),
     rationale: text("rationale", "The bouquet translates the source image's visual hierarchy and atmosphere."), recipe,
   };
 }
 
-async function analyseReference(image: File, mode: BouquetMode, apiKey: string, model: string) {
-  const encoded = await image.arrayBuffer().then((buffer) => {
-    const bytes = new Uint8Array(buffer); let binary = "";
-    for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
-    return btoa(binary);
-  });
-  const prompt = `You are an art director and expert florist. Analyse this image as a visual system to translate into a ${mode} editorial flower bouquet. Do not merely list colours or convert each colour into an obvious matching flower. Read dominant/secondary/accent colour ratios, the proportion and location of dark visual mass, light-dark distribution, contrast rhythm, density, negative-space placement, directional movement, depth, graphic geometry and emotional temperature. Identify the single signature colour that carries the image's identity; it may be a saturated chromatic signal rather than the colour covering the most pixels. Also identify the small contrasting accent colour that acts as the image's emotional punctuation and must not disappear. Match that accent hue literally: distinguish orange or amber from red and yellow, and never substitute one merely because all are warm. Describe the source's STRUCTURAL MOTIF: the strongest silhouette, crop, diagonal, frame, void, repetition or tension that should determine the bouquet's architecture. Describe its MATERIAL LANGUAGE: matte versus glossy, opaque versus transparent, soft versus hard, organic versus synthetic and any reflected-light quality. Describe its CULTURAL STYLE: era, music/fashion/editorial energy and degree of polish without naming or reproducing a person. Name the specific CLICHE RISKS that would make this source become a generic florist product. Choose realistic ${mode} botanical and limited florist construction materials that can carry those shapes and surfaces. Do not default to hydrangea, roses or colour-matched wrapping merely because they are easy palette matches. The recipe must assign the signature colour family to a shape-bearing material, preserve the dark mass with a real structural role when it is visually important, and assign the accent colour to one to three precise focal events. Pale neutrals may not become the primary mass unless the signature colour itself is neutral. Return only valid JSON with exactly these keys: title (short evocative English name), palette (five lowercase #rrggbb colours ordered dominant to accent), signatureColor (one lowercase #rrggbb colour), signatureColorRole (why and where it defines the image), accentColor (one lowercase #rrggbb colour), accentColorRole (why its small contrast matters), brightness, contrast, density, negativeSpace, warmth, darkMass (integers 0-100), mood (three concise descriptors), composition, shape, structuralMotif, materialLanguage, culturalStyle, clicheRisks, rationale (max 45 words), recipe (five objects with flower, role, quantity). Avoid invented species and decorative props.`;
-  const response = await fetch("https://api.openai.com/v1/responses", {
+async function analyseReference(image: File, mode: BouquetMode, apiKey: string, model: string, baseUrl: string) {
+  const prompt = buildAnalysisPrompt(mode);
+  const imageUrl = await fileDataUrl(image);
+  const response = await fetch(`${baseUrl}/responses`, {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
       model,
-      input: [{ role: "user", content: [{ type: "input_text", text: prompt }, { type: "input_image", image_url: `data:${image.type};base64,${encoded}`, detail: "high" }] }],
-      max_output_tokens: 1600,
+      input: [{ role: "user", content: [{ type: "input_text", text: prompt }, { type: "input_image", image_url: imageUrl, detail: "high" }] }],
+      max_output_tokens: 4000,
+      text: { format: { type: "json_object" } },
+      ...(/^gpt-[56](?:[.-]|$)/i.test(model) ? { reasoning: { effort: "low" } } : {}),
     }),
   });
   if (!response.ok) throw new Error(`Vision analysis failed (${response.status}).`);
-  const payload = await response.json() as { output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }> };
+  const payload = await response.json() as VisionResponse;
   const rawText = responseText(payload).replace(/^```json\s*/i, "").replace(/\s*```$/, "");
   return cleanAnalysis(JSON.parse(rawText));
 }
 
-async function generateBouquet(image: File, mode: BouquetMode, analysis: BouquetAnalysis, apiKey: string) {
+async function generateBouquet(image: File, mode: BouquetMode, analysis: BouquetAnalysis, apiKey: string, baseUrl: string, imageModel: string, revisionReasons: string[] = []) {
   const form = new FormData();
-  form.append("model", "gpt-image-2");
+  form.append("model", imageModel);
   form.append("image[]", image, image.name || "reference.png");
   form.append("size", "1024x1024");
   form.append("quality", "medium");
   form.append("output_format", "jpeg");
   form.append("output_compression", "88");
-  form.append("prompt", `Create one photorealistic editorial studio photograph of a professionally constructed ${mode} hand-tied flower bouquet. The supplied image is a visual reference, not an object, face or scene to copy. This must feel like a fashion or album-cover art direction translated into flowers, never a conventional gift-shop bouquet.
-
-VISUAL THESIS: ${analysis.culturalStyle}. Structural motif: ${analysis.structuralMotif}. Material language: ${analysis.materialLanguage}. Rebuild those relationships physically through the bouquet's silhouette, voids, planes, line gestures and surfaces. Preserve palette ${analysis.palette.join(", ")} in dominant-to-accent order; brightness ${analysis.brightness}/100; contrast ${analysis.contrast}/100; density ${analysis.density}/100; negative space ${analysis.negativeSpace}/100; dark visual mass ${analysis.darkMass}/100; mood ${analysis.mood}; composition ${analysis.composition}; silhouette ${analysis.shape}. Do not make colour matching the only connection.
-
-ANTI-GENERIC COMPOSITION: use a deliberately asymmetric, off-centre editorial silhouette with one unmistakable graphic interruption, one controlled negative-space opening and no evenly distributed ring of flowers. Avoid these source-specific clichés: ${analysis.clicheRisks}. No default round hydrangea centre, evenly spaced roses, supermarket filler, pastel-on-pastel sweetness, symmetrical dome, bridal styling, or colour-matched wrapping used as a substitute for floral design. Wrapping must act as one or two clean graphic planes, not layered decorative ruffles.
-
-COLOUR AND SHADOW: ${analysis.signatureColor} is the signature colour because ${analysis.signatureColorRole}; make it immediately recognisable through one concentrated shape-bearing gesture, not a uniform wash. Preserve the darkest palette colour as a substantial matte structural anchor or deep internal void in proportion to the source's ${analysis.darkMass}/100 dark mass; do not brighten it away. Build the main colour as a tonal ladder with dark and mid-value versions carrying most of the area and only a few luminous highlights. ${analysis.accentColor} matters because ${analysis.accentColorRole}; preserve its exact hue as a visible 3–5% punctuation in one to three precise focal events. It must survive at thumbnail size without becoming a second main colour.
-
-MATERIAL TENSION: include at least one hard, clean or reflective/transparent florist material only where supported by the stated material language, contrasted against believable botanical softness. Use it as structure or reflected-light rhythm, never as a decorative prop. Use this feasible material direction: ${analysis.recipe.map((item) => `${item.flower} (${item.quantity}, ${item.role})`).join("; ")}.
-
-BACKGROUND LOCK: isolate the bouquet against one seamless matte studio background using the darkest palette colour, solid or with only an extremely subtle shapeless tonal gradient. The only other visible elements may be coherent wrapping and a soft natural contact shadow. No scenery, architecture, landscape, plants outside the bouquet, fog, rain, bokeh, light orbs, windows, furniture, textural surfaces, decorative objects or props. Botanical realism is mandatory: anatomically correct petals, clean separate stems, plausible branching, natural surfaces, coherent wrapping and gravity. No malformed or fused petals, broken or duplicated stems, impossible species, floating elements, hands, people, faces, vase, text, logo or watermark.`);
-  const response = await fetch("https://api.openai.com/v1/images/edits", {
+  form.append("prompt", buildGenerationPrompt(mode, analysis, revisionReasons));
+  const response = await fetch(`${baseUrl}/images/edits`, {
     method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form,
   });
   if (!response.ok) throw new Error(`Bouquet generation failed (${response.status}).`);
@@ -178,80 +197,132 @@ BACKGROUND LOCK: isolate the bouquet against one seamless matte studio backgroun
   return `data:image/jpeg;base64,${base64}`;
 }
 
+function cleanQa(value: unknown): BouquetQa {
+  if (!value || typeof value !== "object") throw new Error("Visual QA returned invalid JSON.");
+  const raw = value as Record<string, unknown>;
+  const reasons = Array.isArray(raw.hardRejectReasons)
+    ? raw.hardRejectReasons.filter((item): item is string => typeof item === "string" && item.trim().length > 0).slice(0, 5)
+    : [];
+  const sentence = (key: string, fallback: string) => typeof raw[key] === "string" && raw[key]
+    ? String(raw[key]).slice(0, 240)
+    : fallback;
+  return {
+    pass: raw.pass === true && reasons.length === 0,
+    hardRejectReasons: reasons,
+    referenceFidelity: sentence("referenceFidelity", "Reference fidelity requires review."),
+    artDirection: sentence("artDirection", "Art direction requires review."),
+    visualQuality: sentence("visualQuality", "Visual quality requires review."),
+    feasibility: sentence("feasibility", "Physical construction requires review."),
+    backgroundConsistency: sentence("backgroundConsistency", "Background consistency requires review."),
+    primaryGestureVisible: raw.primaryGestureVisible === true,
+    ordinaryFloristWouldNotDo: sentence("ordinaryFloristWouldNotDo", "No distinctive non-retail decision was identified."),
+  };
+}
 
-type MaterialReading = { materials: string[]; palette: string[]; composition: string; textures: string; mood: string; botanicalDirection: string; poem: string };
-async function analyseMaterials(image: File, apiKey: string, model: string): Promise<MaterialReading> {
-  const bytes = new Uint8Array(await image.arrayBuffer());
-  let encoded = ""; for (let i = 0; i < bytes.length; i += 0x8000) encoded += String.fromCharCode(...bytes.subarray(i, i+0x8000));
-  const res = await fetch("https://api.openai.com/v1/responses", {
-    method:"POST", headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},
-    body:JSON.stringify({model,input:[{role:"user",content:[
-      {type:"input_text",text:`Exhibition art direction: analyze an overhead photograph of physical texture samples arranged by a visitor. The materials, not any people, are the subject. Describe only what is visually supported. Explain spatial arrangement (overlap, rhythm, orientation, negative space), tactile contrast (soft/hard, matte/shiny, transparent/opaque), dominant/secondary/small accent colors, and emotional impression. Translate these properties into a REALISTIC hand-tied florist-feasible editorial botanical composition, with natural flowers, stems, simple wrapping. Do not copy the physical samples as extraneous props or invent black nets or impossible materials. One neutral matte seamless studio background; restrained color; tiny accent if present. Return JSON object with fields materials (array 1-6 short identified material phrases), palette (array of 3-5 lowercase hex colors), composition, textures, mood, botanicalDirection, poem (one short ORIGINAL English poetic line, not a quote). JSON only.`},
-      {type:"input_image",image_url:`data:${image.type};base64,${btoa(encoded)}`,detail:"high"}
-    ]}],max_output_tokens:900})
+async function evaluateBouquet(reference: File, candidateDataUrl: string, analysis: BouquetAnalysis, apiKey: string, model: string, baseUrl: string) {
+  const referenceDataUrl = await fileDataUrl(reference);
+  const response = await fetch(`${baseUrl}/responses`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      input: [{ role: "user", content: [
+        { type: "input_text", text: buildQaPrompt(analysis) },
+        { type: "input_text", text: "IMAGE 1 — REFERENCE" },
+        { type: "input_image", image_url: referenceDataUrl, detail: "high" },
+        { type: "input_text", text: "IMAGE 2 — GENERATED BOUQUET" },
+        { type: "input_image", image_url: candidateDataUrl, detail: "high" },
+      ] }],
+      max_output_tokens: 2500,
+      text: { format: { type: "json_object" } },
+      ...(/^gpt-[56](?:[.-]|$)/i.test(model) ? { reasoning: { effort: "low" } } : {}),
+    }),
   });
-  if(!res.ok) throw new Error(`Material recognition failed (${res.status}).`);
-  const data=await res.json() as {output?:Array<{content?:Array<{type?:string;text?:string}>}>};
-  const parsed=JSON.parse(responseText(data).replace(/^```json\s*/i,"").replace(/\s*```$/,"")) as Record<string,unknown>;
-  const string=(key:string)=>typeof parsed[key]==="string" ? String(parsed[key]).slice(0,380):"";
-  const materials=Array.isArray(parsed.materials)?parsed.materials.filter((x):x is string=>typeof x==="string").slice(0,6):[];
-  const palette=Array.isArray(parsed.palette)?parsed.palette.filter((x):x is string=>typeof x==="string"&&/^#[0-9a-f]{6}$/i.test(x)).slice(0,5):[];
-  if(!materials.length||palette.length<3||!string("composition")||!string("botanicalDirection")) throw new Error("Material interpretation was incomplete.");
-  return {materials,palette,composition:string("composition"),textures:string("textures"),mood:string("mood"),botanicalDirection:string("botanicalDirection"),poem:string("poem")};
-}
-async function renderMaterialBouquet(reading: MaterialReading, apiKey: string) {
-  const prompt=`Create a single editorial studio PHOTO of a physically feasible hand-tied flower bouquet, inspired by material samples but NOT depicting them. Florist construction using plausible natural or preserved blooms, normal stems, minimal wrapping, no black mesh or fantasy plants. Interpret: ${reading.botanicalDirection}. Spatial composition: ${reading.composition}. Tactile language: ${reading.textures}. Emotion: ${reading.mood}. Palette: ${reading.palette.join(", ")}. Maintain dark-to-mid tonal hierarchy, restrained saturated highlights, 3-5% small accent if visually supported, legible negative space and asymmetry. One uniform matte pale-grey studio backdrop, gentle contact shadow, bouquet centred with margins, isolated. No props, text, hands, vase, scenery, reflections, gradients or graphic decoration. Realistic botanical anatomy and stems. Contemporary editorial floral sculpture rather than generic luxury gift bouquet.`;
-  const form=new FormData();form.append("model","gpt-image-2");form.append("size","1024x1024");form.append("quality","medium");form.append("output_format","jpeg");form.append("output_compression","85");form.append("prompt",prompt);
-  const response=await fetch("https://api.openai.com/v1/images/generations",{method:"POST",headers:{Authorization:`Bearer ${apiKey}`},body:form});
-  if(!response.ok) throw new Error(`Material bouquet generation failed (${response.status}).`);
-  const data=await response.json() as {data?:Array<{b64_json?:string}>};
-  if(!data.data?.[0]?.b64_json) throw new Error("Image model returned no bouquet.");
-  return `data:image/jpeg;base64,${data.data[0].b64_json}`;
-}
-async function handleMaterialTranslation(request:Request,env:Env) {
-  if(!isAllowedOrigin(request)) return jsonResponse(request,{error:"Origin not allowed."},403);
-  if(request.method==="OPTIONS") return new Response(null,{status:204,headers:corsHeaders(request)});
-  if(request.method!=="POST") return jsonResponse(request,{error:"Method not allowed."},405);
-  if(!env.OPENAI_API_KEY) return jsonResponse(request,{error:"AI generation has not been configured."},503);
-  const now=Date.now(),client=request.headers.get("CF-Connecting-IP")??"unknown";
-  const recent=(generationRequests.get(client)??[]).filter(t=>now-t<RATE_LIMIT_WINDOW_MS);
-  if(recent.length>=RATE_LIMIT_MAX_REQUESTS) return jsonResponse(request,{error:"Rate limit reached. Try again later."},429);
-  recent.push(now);generationRequests.set(client,recent);
-  try {
-    const form=await request.formData(),image=form.get("image");
-    if(!(image instanceof File)||!ALLOWED_IMAGE_TYPES.has(image.type)) return jsonResponse(request,{error:"Submit a JPEG, PNG or WebP photograph."},400);
-    if(image.size===0||image.size>MAX_UPLOAD_BYTES) return jsonResponse(request,{error:"Image must be between 1 byte and 8 MB."},413);
-    const reading=await analyseMaterials(image,env.OPENAI_API_KEY,env.OPENAI_VISION_MODEL??"gpt-5.4-mini");
-    const imageDataUrl=await renderMaterialBouquet(reading,env.OPENAI_API_KEY);
-    return jsonResponse(request,{imageDataUrl,reading});
-  } catch(error) {console.error("material_translation_failed",error);return jsonResponse(request,{error:error instanceof Error?error.message:"Generation failed."},502);}
+  if (!response.ok) throw new Error(`Visual QA failed (${response.status}).`);
+  const payload = await response.json() as VisionResponse;
+  const rawText = responseText(payload).replace(/^```json\s*/i, "").replace(/\s*```$/, "");
+  return cleanQa(JSON.parse(rawText));
 }
 
-async function handleGenerate(request: Request, env: Env) {
+function apiGuard(request: Request, env: Env, bucket: string, maxRequests: number) {
   if (!isAllowedOrigin(request)) return jsonResponse(request, { error: "Origin not allowed." }, 403);
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(request) });
   if (request.method !== "POST") return jsonResponse(request, { error: "Method not allowed." }, 405);
   if (!env.OPENAI_API_KEY) return jsonResponse(request, { error: "Generation service is not configured.", code: "NOT_CONFIGURED" }, 503);
   const now = Date.now();
-  const clientId = request.headers.get("CF-Connecting-IP") ?? "unknown";
+  const clientId = `${request.headers.get("CF-Connecting-IP") ?? "unknown"}:${bucket}`;
   const recentRequests = (generationRequests.get(clientId) ?? []).filter((timestamp) => now - timestamp < RATE_LIMIT_WINDOW_MS);
-  if (recentRequests.length >= RATE_LIMIT_MAX_REQUESTS) {
+  if (recentRequests.length >= maxRequests) {
     return jsonResponse(request, { error: "Too many generations. Please try again in a few minutes." }, 429);
   }
   recentRequests.push(now);
   generationRequests.set(clientId, recentRequests);
+  return null;
+}
+
+function imageFromForm(form: FormData, key = "image") {
+  const image = form.get(key);
+  if (!(image instanceof File) || !ALLOWED_IMAGE_TYPES.has(image.type)) throw new Error(`${key} must be a JPEG, PNG or WebP image.`);
+  if (image.size > MAX_UPLOAD_BYTES) throw new Error(`${key} must be 8 MB or smaller.`);
+  return image;
+}
+
+function analysisFromForm(form: FormData) {
+  const raw = form.get("analysis");
+  if (typeof raw !== "string") throw new Error("Visual analysis is required.");
+  return cleanAnalysis(JSON.parse(raw));
+}
+
+async function handleAnalyse(request: Request, env: Env) {
+  const blocked = apiGuard(request, env, "analyse", 3);
+  if (blocked) return blocked;
   try {
     const form = await request.formData();
-    const image = form.get("image");
+    const image = imageFromForm(form);
     const mode = form.get("mode") === "preserved" ? "preserved" : "fresh";
-    if (!(image instanceof File) || !ALLOWED_IMAGE_TYPES.has(image.type)) return jsonResponse(request, { error: "Upload a JPEG, PNG or WebP image." }, 400);
-    if (image.size > MAX_UPLOAD_BYTES) return jsonResponse(request, { error: "Image must be 8 MB or smaller." }, 413);
-    const analysis = await analyseReference(image, mode, env.OPENAI_API_KEY, env.OPENAI_VISION_MODEL ?? "gpt-5.4-mini");
-    const imageDataUrl = await generateBouquet(image, mode, analysis, env.OPENAI_API_KEY);
-    return jsonResponse(request, { imageDataUrl, analysis });
+    const visionModel = env.OPENAI_VISION_MODEL ?? "gpt-5.4-mini";
+    const analysis = await analyseReference(image, mode, env.OPENAI_API_KEY, visionModel, apiBaseUrl(env));
+    return jsonResponse(request, { analysis });
   } catch (error) {
-    console.error("bouquet_generation_failed", error);
-    return jsonResponse(request, { error: error instanceof Error ? error.message : "Generation failed." }, 502);
+    console.error("bouquet_analysis_failed", error);
+    return jsonResponse(request, { error: error instanceof Error ? error.message : "Analysis failed." }, 502);
+  }
+}
+
+async function handleRender(request: Request, env: Env) {
+  const blocked = apiGuard(request, env, "render", 6);
+  if (blocked) return blocked;
+  try {
+    const form = await request.formData();
+    const image = imageFromForm(form);
+    const mode = form.get("mode") === "preserved" ? "preserved" : "fresh";
+    const analysis = analysisFromForm(form);
+    const revisionReasonsRaw = form.get("revisionReasons");
+    const revisionReasons = typeof revisionReasonsRaw === "string"
+      ? (JSON.parse(revisionReasonsRaw) as unknown[]).filter((item): item is string => typeof item === "string").slice(0, 5)
+      : [];
+    const imageDataUrl = await generateBouquet(image, mode, analysis, env.OPENAI_API_KEY, apiBaseUrl(env), env.OPENAI_IMAGE_MODEL?.trim() || "gpt-image-2", revisionReasons);
+    return jsonResponse(request, { imageDataUrl });
+  } catch (error) {
+    console.error("bouquet_render_failed", error);
+    return jsonResponse(request, { error: error instanceof Error ? error.message : "Rendering failed." }, 502);
+  }
+}
+
+async function handleQa(request: Request, env: Env) {
+  const blocked = apiGuard(request, env, "qa", 6);
+  if (blocked) return blocked;
+  try {
+    const form = await request.formData();
+    const reference = imageFromForm(form);
+    const candidate = imageFromForm(form, "candidate");
+    const analysis = analysisFromForm(form);
+    const visionModel = env.OPENAI_VISION_MODEL ?? "gpt-5.4-mini";
+    const qa = await evaluateBouquet(reference, await fileDataUrl(candidate), analysis, env.OPENAI_API_KEY, visionModel, apiBaseUrl(env));
+    return jsonResponse(request, { qa });
+  } catch (error) {
+    console.error("bouquet_visual_qa_failed", error);
+    return jsonResponse(request, { error: error instanceof Error ? error.message : "Visual QA failed." }, 502);
   }
 }
 
@@ -270,9 +341,10 @@ const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
-    if (url.pathname === "/api/material-translate") return handleMaterialTranslation(request, env);
-
-    if (url.pathname === "/api/generate") return handleGenerate(request, env);
+    if (url.pathname === "/api/analyse") return handleAnalyse(request, env);
+    if (url.pathname === "/api/render") return handleRender(request, env);
+    if (url.pathname === "/api/qa") return handleQa(request, env);
+    if (url.pathname === "/api/generate") return handleGeneration(request, env, { development: import.meta.env.DEV });
 
     if (url.pathname === "/_vinext/image") {
       const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];

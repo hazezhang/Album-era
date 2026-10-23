@@ -1,12 +1,22 @@
 # Album / Bouquet
 
-A mobile-first prototype that turns an uploaded album or song cover into a unique, florist-ready bouquet. The browser handles upload and presentation; a server-side Worker analyses the image with vision, passes both the reference image and its visual system to GPT Image, and returns the generated bouquet plus its material recipe.
+The engineering MVP is available at `/demo`: upload → `/api/generate` → vision → validated interpretation → real image generation → browser display. It uses replaceable provisional prompts and never substitutes a fallback image. See [implementation, audit, configuration and acceptance status](docs/DEMO_IMPLEMENTATION.md).
+
+A mobile-first prototype that turns an uploaded album or song cover into a unique, florist-ready bouquet. The browser handles upload and presentation; a server-side Worker analyses the image, extracts one Primary Gesture, generates the bouquet, runs visual art-direction QA, and automatically retries once when a hard-reject condition is found.
 
 The four art-directed studies remain as loading references and an explicitly labelled fallback when live generation is unavailable.
 
 ## Live generation
 
-The Worker exposes `POST /api/generate` and accepts multipart fields `image` (JPEG, PNG or WebP, up to 8 MB) and `mode` (`fresh` or `preserved`). API credentials never enter the browser bundle.
+The browser coordinates three bounded Worker calls so vision, rendering and QA do not exceed one synchronous request window:
+
+- `POST /api/analyse` accepts `image` and `mode`, and returns the runtime visual analysis.
+- `POST /api/render` accepts `image`, `mode`, the analysis JSON and optional QA rejection reasons, and returns one generated bouquet.
+- `POST /api/qa` accepts the reference image, generated candidate and analysis JSON, and returns the Visual QA verdict.
+
+When QA returns a hard reject, the browser calls render and QA once more. JPEG, PNG and WebP uploads up to 8 MB are supported. API credentials never enter the browser bundle.
+
+Runtime art direction lives in [`docs/BOUQUET_AESTHETIC_RUNTIME.md`](docs/BOUQUET_AESTHETIC_RUNTIME.md). Historical cases, material references and production notes remain in [`docs/BOUQUET_DESIGN_REFERENCE.md`](docs/BOUQUET_DESIGN_REFERENCE.md) and are not injected into normal generation requests. The executable prompt builders and QA contract live in `worker/aesthetic-runtime.ts`.
 
 Production runtime variables:
 
@@ -108,3 +118,19 @@ The timeout defaults can be overridden for a controlled canary with `SITES_INSTA
 
 - [vinext Documentation](https://github.com/cloudflare/vinext)
 - [Drizzle D1 Guide](https://orm.drizzle.team/docs/get-started/d1-new)
+
+## OpenAI-compatible gateway
+
+All analysis, rendering and visual QA requests use server-side `OPENAI_BASE_URL`
+(default `https://api.openai.com/v1`). For the Zendure gateway, set:
+
+- `OPENAI_BASE_URL`: `https://llmgateway.zendure.tech/litellm/v1`
+- `OPENAI_API_KEY`: a gateway-issued key, stored as a runtime secret
+- `OPENAI_VISION_MODEL`: the gateway's vision-capable model alias
+- `OPENAI_IMAGE_MODEL`: the gateway's image-editing model alias (default `gpt-image-2`)
+
+The base URL already includes `/v1`; do not append `/responses` or `/images/edits`.
+The gateway must support Responses image inputs and multipart Images edits with
+`b64_json` output. An unauthenticated 401 confirms reachability only, not model
+permissions or endpoint compatibility. Never expose the key in `NEXT_PUBLIC_*`
+variables.

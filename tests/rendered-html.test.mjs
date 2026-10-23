@@ -54,8 +54,20 @@ test("keeps live generation behind a configured server secret", async () => {
   );
 
   assert.equal(response.status, 503);
-  assert.deepEqual(await response.json(), {
-    error: "Generation service is not configured.",
-    code: "NOT_CONFIGURED",
-  });
+  const failure = await response.json();
+  assert.equal(failure.code, "NOT_CONFIGURED");
+  assert.equal(failure.stage, "backend");
+  assert.equal(failure.retryable, false);
+  assert.equal(failure.requestId, response.headers.get("X-Request-ID"));
+  assert.equal(typeof failure.error, "string");
+});
+
+
+test("renders the upload-only MVP without a camera control or fallback success", async () => {
+  const worker = await loadWorker();
+  const response = await worker.fetch(new Request("https://album-era.hazellfish-z.chatgpt.site/demo", {headers:{accept:"text/html"}}), {ASSETS:{fetch:async()=>new Response("Not found",{status:404})}}, {waitUntil(){},passThroughOnException(){}});
+  assert.equal(response.status,200);
+  const html = await response.text();
+  assert.match(html,/Upload image/); assert.match(html,/Generate bouquet/);
+  assert.doesNotMatch(html,/Open camera|AI generation complete|FALLBACK STUDY/);
 });
