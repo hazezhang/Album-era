@@ -33,8 +33,11 @@ test("renders the album bouquet studio", async () => {
   );
   const html = await response.text();
   assert.match(html, /<title>Album \/ Bouquet<\/title>/i);
-  assert.match(html, /Upload a cover/);
-  assert.match(html, /Generate my bouquet/);
+  assert.match(html, /You, as a/);
+  assert.match(html, /Choose your source/i);
+  assert.match(html, /Upload image/);
+  assert.match(html, /Generate bouquet/);
+  assert.match(html, /Curated Study/);
 });
 
 test("keeps live generation behind a configured server secret", async () => {
@@ -70,4 +73,14 @@ test("renders the upload-only MVP without a camera control or fallback success",
   const html = await response.text();
   assert.match(html,/Upload image/); assert.match(html,/Generate bouquet/);
   assert.doesNotMatch(html,/Open camera|AI generation complete|FALLBACK STUDY/);
+});
+
+test("keeps the album workflow and material receipt on clearly labelled archive routes", async () => {
+  const worker = await loadWorker();
+  const env = {ASSETS:{fetch:async()=>new Response("Not found",{status:404})}};
+  const ctx = {waitUntil(){},passThroughOnException(){}};
+  const album = await worker.fetch(new Request("https://album-era.hazellfish-z.chatgpt.site/album-studio",{headers:{accept:"text/html"}}),env,ctx);
+  assert.equal(album.status,200); assert.match(await album.text(),/Fresh flowers|Upload a cover/);
+  const materials = await worker.fetch(new Request("https://album-era.hazellfish-z.chatgpt.site/material-study",{headers:{accept:"text/html"}}),env,ctx);
+  assert.equal(materials.status,200); assert.match(await materials.text(),/MATERIAL COMPOSITION|Print receipt/);
 });

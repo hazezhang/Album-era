@@ -6,7 +6,7 @@ const runtimeSource = await readFile(new URL("../worker/aesthetic-runtime.ts", i
 const runtimeDoc = await readFile(new URL("../docs/BOUQUET_AESTHETIC_RUNTIME.md", import.meta.url), "utf8");
 const referenceDoc = await readFile(new URL("../docs/BOUQUET_DESIGN_REFERENCE.md", import.meta.url), "utf8");
 const workerSource = await readFile(new URL("../worker/index.ts", import.meta.url), "utf8");
-const pageSource = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+const pageSource = await readFile(new URL("../components/legacy-album-studio.tsx", import.meta.url), "utf8");
 
 test("generation prompt follows the runtime art-direction order", () => {
   const headings = [
