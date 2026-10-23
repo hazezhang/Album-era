@@ -95,7 +95,7 @@ Live production results and browser limitations will be recorded after deploymen
 
 ### Current verification results
 
-- TypeScript check and production build passed. Initial complete suite: 25 tests passed.
+- TypeScript check and production build passed. Complete suite: 26 tests passed.
 - Production `/demo`: HTTP 200. Invalid file: HTTP 415 `UNSUPPORTED_IMAGE_TYPE`.
 - Real API run 1: `lunar-veil-cover.webp`, HTTP 200, 44.8 s; actual PNG output.
 - Real API run 2: `cherry-static-cover.webp`, HTTP 504, vision deadline at 45.7 s.
@@ -115,3 +115,45 @@ Reproduce production API-only checks with
 Use `--input cherry-static-cover.webp --output-dir outputs/live-demo-retry` to retry
 only the failed fixture. The script records request IDs and timings, never keys or
 image contents in its JSON report. Image bytes are kept only as local QA outputs.
+
+### Retry result and final acceptance boundary
+
+The failed `cherry-static-cover.webp` request succeeded on an explicit retry:
+HTTP 200, 64.7 s total; 36.0 s vision and 27.8 s image generation. Request ID:
+`2e8f1ea4-c6d3-4fe8-aa31-e0f8fc8dea31`. Three different image fixtures now have
+successful real production API results, with one prior timeout retained.
+
+The API returned actual PNG bytes even when JPEG was requested; MIME detection
+uses response bytes rather than assuming the requested output format.
+
+**Definition of Done is not fully met:** production browser end-to-end runs
+remain 0/3 verified. No provider stub, recorded response, local build or API-only
+run is included in that count.
+
+The Sites managed-preview guidance requires browser QA on
+`http://terminal.local:4173/` and states: “deployed Sites URLs are unreachable
+from that browser.” The permitted preview has no production secret and its
+outbound production-host lookup previously failed with `EAI_AGAIN`. Supplying a
+credential directly in chat or embedding it in a client bundle is not a workaround.
+A browser environment capable of opening the actual deployed `/demo` URL and
+uploading three references is still required. Target Safari is also unverified.
+
+### Changed files
+
+- `worker/generation.ts`, `worker/generation-prompts.ts`, `lib/generation-contract.ts`:
+  provider transport, errors/timeouts, generic intermediate representation and replaceable prompts.
+- `worker/index.ts`: route dispatch; legacy phased routes remain.
+- `components/image-bouquet-demo.tsx`, `components/camera-translation.tsx`,
+  `app/demo/page.tsx`, `app/page.tsx`: upload-only MVP, reuse existing exhibition
+  import, navigation, decode validation and completion state.
+- `tests/generation-api.test.mjs`, `tests/rendered-html.test.mjs`: provider and
+  rendered-route regression coverage.
+- `scripts/verify-live-demo.mjs`: repeatable production API-only checks, optionally
+  real paid generation; input fixture allowlist and redacted evidence.
+- `README.md`, this document: audit, configuration, deployment and acceptance status.
+- Existing aesthetic runtime source/docs/tests are reconciled from the prior
+  deployment; they are preserved legacy functionality and are not new product decisions.
+
+The GitHub feature branch is not merged into `main`; GitHub Pages remains its
+previous build until merge/deployment. Use the separately deployed full-stack
+Site `/demo` for this MVP.

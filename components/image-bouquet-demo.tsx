@@ -10,6 +10,7 @@ export default function ImageBouquetDemo() {
   const [file, setFile] = useState<File | null>(null), [preview, setPreview] = useState<string | null>(null);
   const [result, setResult] = useState<GenerationResult | null>(null), [failure, setFailure] = useState<GenerationFailure | null>(null);
   const [busy, setBusy] = useState(false), [displayed, setDisplayed] = useState(false);
+  const [previewReady, setPreviewReady] = useState(false);
   const [elapsed, setElapsed] = useState(0), [retryAfter, setRetryAfter] = useState(0);
   useEffect(() => () => activeRequest.current?.abort(), []);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
@@ -23,7 +24,7 @@ export default function ImageBouquetDemo() {
 
   function select(next?: File) {
     if (!next || busy) return;
-    setResult(null); setDisplayed(false); setFailure(null); setRetryAfter(0);
+    setResult(null); setDisplayed(false); setFailure(null); setRetryAfter(0); setPreviewReady(false);
     if (!IMAGE_TYPES.includes(next.type) || !next.size || next.size > MAX_IMAGE_BYTES) {
       setFile(null); setPreview(null);
       setFailure({ requestId: "", stage: "upload", code: "INVALID_UPLOAD", error: "Choose a non-empty JPEG, PNG or WebP image of 8 MB or less.", retryable: false }); return;
@@ -32,7 +33,7 @@ export default function ImageBouquetDemo() {
   }
 
   async function generate() {
-    if (!file || busy || retryAfter > 0) return;
+    if (!file || !previewReady || busy || retryAfter > 0) return;
     setBusy(true); setElapsed(0); setFailure(null); setResult(null); setDisplayed(false);
     const controller = new AbortController(); activeRequest.current = controller;
     const timer = setTimeout(() => controller.abort(), 120000);
@@ -42,6 +43,7 @@ export default function ImageBouquetDemo() {
       let payload: unknown;
       try { payload = await response.json(); }
       catch { throw { requestId: response.headers.get("X-Request-ID") ?? "", stage: "backend", code: "INVALID_SERVER_RESPONSE", error: "The server returned an unreadable response. Please retry.", retryable: true }; }
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw { requestId: response.headers.get("X-Request-ID") ?? "", stage: "backend", code: "INVALID_SERVER_RESPONSE", error: "The server returned an invalid response. Please retry.", retryable: true };
       if (!response.ok) {
         const data = payload as Partial<GenerationFailure>;
         setRetryAfter(Math.min(600, Math.max(0, Number(data.retryAfterSeconds ?? response.headers.get("Retry-After")) || 0)));
@@ -60,9 +62,9 @@ export default function ImageBouquetDemo() {
     <div className="exhibition-section-name"><span>IMAGE UPLOAD → AI BOUQUET</span><span>LIVE DEMO</span></div>
     <p>Upload an image to generate a bouquet. Interpretation rules are provisional while the product team defines the final experience.</p>
     <div className="upload-demo-grid"><div>
-      {preview ? <img className="upload-demo-image" src={preview} alt="Uploaded reference" /> : <div className="upload-demo-empty">Choose a reference image</div>}
+      {preview ? <img className="upload-demo-image" src={preview} alt="Uploaded reference" onLoad={() => setPreviewReady(true)} onError={() => { setFile(null); setPreview(null); setPreviewReady(false); setFailure({requestId:"",stage:"upload",code:"IMAGE_DECODE_FAILED",error:"This image could not be opened. Choose another file.",retryable:false}); }} /> : <div className="upload-demo-empty">Choose a reference image</div>}
       <input ref={input} type="file" accept="image/jpeg,image/png,image/webp" aria-label="Upload reference image" disabled={busy} hidden onChange={e => { select(e.target.files?.[0]); e.target.value = ""; }} />
-      <div className="upload-demo-actions"><button type="button" disabled={busy} onClick={() => input.current?.click()}>{file ? "Choose another image" : "Upload image"}</button><button type="button" disabled={!file || busy || retryAfter > 0} onClick={generate}>{busy ? "Generating…" : retryAfter ? `Wait ${retryAfter}s` : failure && file ? "Retry generation" : "Generate bouquet"}</button></div>
+      <div className="upload-demo-actions"><button type="button" disabled={busy} onClick={() => input.current?.click()}>{file ? "Choose another image" : "Upload image"}</button><button type="button" disabled={!file || !previewReady || busy || retryAfter > 0} onClick={generate}>{busy ? "Generating…" : retryAfter ? `Wait ${retryAfter}s` : failure && file ? "Retry generation" : "Generate bouquet"}</button></div>
       <small>JPEG, PNG or WebP · up to 8 MB. Images are sent to the configured AI provider after Generate; this demo does not save uploads.</small>
       {busy && <p role="status">{result ? "Loading generated image…" : "Understanding the image and generating your bouquet…"} {elapsed}s elapsed. This may take up to two minutes.</p>}
       {failure && <div role="alert" className="upload-demo-error"><strong>{labels[failure.stage] ?? "Server"} error</strong><p>{failure.error}</p><small>{failure.code}{failure.requestId ? ` · Reference ${failure.requestId}` : ""}</small></div>}

@@ -75,7 +75,9 @@ export function parseVision(payload: unknown) {
   const data = payload as { status?: string; output?: Array<{ content?: Array<{ type?: string; text?: string }> }> };
   if (!data || data.status === "incomplete" || data.status === "failed") throw new Failure("VISION_INCOMPLETE", "vision", "The vision model did not complete its response. Please retry.", 502, true);
   if (data.output !== undefined && !Array.isArray(data.output)) throw new Failure("VISION_INVALID_RESPONSE", "vision", "The vision provider returned an invalid output structure.", 502, true);
-  const text = (data.output ?? []).flatMap(item => item.content ?? []).filter(item => item.type === "output_text").map(item => item.text ?? "").join("").trim();
+  const text = (data.output ?? []).flatMap(item => item && Array.isArray(item.content) ? item.content : [])
+    .filter(item => item && item.type === "output_text" && typeof item.text === "string")
+    .map(item => item.text).join("").trim();
   try { return parseInterpretation(JSON.parse(text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""))); }
   catch (error) { if (error instanceof Failure) throw error; throw new Failure("VISION_INVALID_JSON", "vision", "The vision model returned malformed JSON. Please retry.", 502, true); }
 }
