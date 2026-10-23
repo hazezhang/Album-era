@@ -1,5 +1,7 @@
 # Album / Bouquet
 
+The engineering MVP is available at `/demo`: upload → `/api/generate` → vision → validated interpretation → real image generation → browser display. It uses replaceable provisional prompts and never substitutes a fallback image. See [implementation, audit, configuration and acceptance status](docs/DEMO_IMPLEMENTATION.md).
+
 A mobile-first prototype that turns an uploaded album or song cover into a unique, florist-ready bouquet. The browser handles upload and presentation; a server-side Worker analyses the image, extracts one Primary Gesture, generates the bouquet, runs visual art-direction QA, and automatically retries once when a hard-reject condition is found.
 
 The four art-directed studies remain as loading references and an explicitly labelled fallback when live generation is unavailable.

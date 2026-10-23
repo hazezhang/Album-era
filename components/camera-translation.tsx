@@ -1,35 +1,3 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
-import { Camera, ImageUp, RefreshCw, Sparkles } from "lucide-react";
-
-type Reading={materials:string[];palette:string[];composition:string;textures:string;mood:string;botanicalDirection:string;poem:string};
-const ENDPOINT=(process.env.NEXT_PUBLIC_GENERATION_API_URL??"/api/generate").replace(/\/api\/generate\/?$/,"/api/material-translate");
-export default function CameraTranslation(){
- const video=useRef<HTMLVideoElement>(null),stream=useRef<MediaStream|null>(null),upload=useRef<HTMLInputElement>(null);
- const [open,setOpen]=useState(false),[photo,setPhoto]=useState<string|null>(null),[file,setFile]=useState<File|null>(null);
- const [busy,setBusy]=useState(false),[error,setError]=useState(""),[result,setResult]=useState<{imageDataUrl:string;reading:Reading}|null>(null);
- const stop=()=>{stream.current?.getTracks().forEach(t=>t.stop());stream.current=null;setOpen(false);if(video.current)video.current.srcObject=null;};
- useEffect(()=>()=>{stream.current?.getTracks().forEach(t=>t.stop());},[]);
- async function start(){setError("");stop();try{const feed=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment",width:{ideal:1280},height:{ideal:960}},audio:false});stream.current=feed;setOpen(true);requestAnimationFrame(()=>{if(video.current){video.current.srcObject=feed;void video.current.play();}});}catch{setError("Camera unavailable. Please use an image upload or check camera permissions.");}}
- function capture(){const v=video.current;if(!v||!v.videoWidth)return;const c=document.createElement("canvas");const ratio=Math.min(1,1280/v.videoWidth);c.width=Math.round(v.videoWidth*ratio);c.height=Math.round(v.videoHeight*ratio);c.getContext("2d")?.drawImage(v,0,0,c.width,c.height);c.toBlob(blob=>{if(blob){if(photo)URL.revokeObjectURL(photo);setFile(new File([blob],"material-table.jpg",{type:"image/jpeg"}));setPhoto(URL.createObjectURL(blob));setResult(null);stop();}},"image/jpeg",.85);}
- function select(f?:File){if(!f)return;if(!["image/jpeg","image/png","image/webp"].includes(f.type)||f.size>8*1024*1024){setError("Please choose a JPEG, PNG or WebP photo under 8 MB.");return;}stop();if(photo)URL.revokeObjectURL(photo);setFile(f);setPhoto(URL.createObjectURL(f));setResult(null);setError("");}
- async function generate(){if(!file||busy)return;setBusy(true);setError("");setResult(null);try{const form=new FormData();form.append("image",file);const r=await fetch(ENDPOINT,{method:"POST",body:form});const data=await r.json() as {imageDataUrl?:string;reading?:Reading;error?:string};if(!r.ok||!data.imageDataUrl||!data.reading)throw new Error(data.error||"No AI image returned.");setResult({imageDataUrl:data.imageDataUrl,reading:data.reading});}catch(e){setError(e instanceof Error?e.message:"Generation unavailable.");}finally{setBusy(false);}}
- return <div className="camera-translation">
-  <div className="exhibition-section-name"><span>REAL MATERIALS / CAMERA-DRIVEN TRANSLATION</span><span>AI STUDIO</span></div>
-  <p className="camera-subtitle">Arrange physical samples on a plain tabletop. Photograph their textures and spatial relationships, then translate them into a florist-feasible editorial bouquet.</p>
-  <div className="camera-layout">
-   <div className="camera-input">
-    {open?<video ref={video} autoPlay muted playsInline className="camera-preview"/>:photo?<img src={photo} alt="Photographed exhibition materials" className="camera-preview"/>:<div className="camera-placeholder"><Camera size={36}/><p>Place 2–3 textures inside the frame</p><small>Keep hands, faces and background clutter outside the shot.</small></div>}
-    <div className="camera-buttons"><button onClick={open?capture:start} disabled={busy} type="button"><Camera size={16}/>{open?"Capture photograph":"Open camera"}</button><button type="button" onClick={()=>upload.current?.click()} disabled={busy}><ImageUp size={16}/>Upload photo</button></div>
-    <input ref={upload} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={e=>select(e.target.files?.[0])}/>
-    <button className="camera-generate" type="button" disabled={!file||busy} onClick={generate}>{busy?<RefreshCw size={17}/>:<Sparkles size={17}/>} {busy?"Interpreting materials and composing flowers…":"Translate materials into bouquet"}</button>
-    {error&&<p className="camera-error" role="alert">{error}</p>}
-   </div>
-   <div className="camera-output">
-    {result?<><img src={result.imageDataUrl} alt="AI-generated editorial botanical sculpture based on photographed texture materials"/><p className="camera-poem">{result.reading.poem}</p><p><strong>Observed materials:</strong> {result.reading.materials.join(" · ")}</p><p><strong>Spatial interpretation:</strong> {result.reading.composition}</p><p><strong>Botanical direction:</strong> {result.reading.botanicalDirection}</p><div className="camera-palette">{result.reading.palette.map(c=><i key={c} style={{background:c}}/>)}</div></>:<div className="camera-placeholder"><Sparkles size={32}/><p>Your AI flower sculpture will appear here.</p><small>This is a real server-side generation, not the pixel study shown below.</small></div>}
-   </div>
-  </div>
-  <p className="camera-disclaimer">Camera images are submitted to the generation service only after you press Translate. Camera access requires HTTPS or localhost. The resulting bouquet is a visual proposal; a florist should review physical feasibility.</p>
-  <style jsx global>{`.camera-translation{margin:0 0 5rem;color:#18253c}.camera-subtitle{max-width:650px;color:#526273;line-height:1.7}.camera-layout{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem}.camera-preview,.camera-output>img{width:100%;aspect-ratio:4/3;object-fit:contain;background:#dce1e3}.camera-placeholder{min-height:300px;background:#dce1e3;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:2rem;color:#748294}.camera-placeholder p{font:24px Georgia,serif;margin:1rem 0}.camera-placeholder small{line-height:1.6}.camera-buttons{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}.camera-buttons button,.camera-generate{display:flex;align-items:center;gap:8px;border:1px solid #426c90;padding:12px 14px;background:transparent;color:#254b70;cursor:pointer}.camera-generate{width:100%;justify-content:center;background:#254b70;color:#fff;margin-top:10px}.camera-generate:disabled,.camera-buttons button:disabled{opacity:.5;cursor:not-allowed}.camera-error{color:#b03232;font-size:13px}.camera-output{background:#f6f5f0;padding:14px}.camera-output>p{font-size:13px;line-height:1.65;margin:10px 0}.camera-output .camera-poem{font:italic 20px/1.5 Georgia,serif;color:#254b70;margin:18px 0}.camera-palette{display:flex;height:25px;margin-top:12px}.camera-palette i{flex:1}.camera-disclaimer{font-size:12px;color:#697583;margin-top:14px;line-height:1.7}@media(max-width:850px){.camera-layout{grid-template-columns:1fr}}@media print{.camera-translation{display:none!important}}`}</style>
- </div>;
-}
+// Keep the existing exhibition import path; the MVP uses uploads only.
+export { default } from "./image-bouquet-demo";
