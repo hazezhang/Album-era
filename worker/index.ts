@@ -1,6 +1,7 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { handleGeneration, type GenerationEnv } from "./generation";
 import {
   buildAnalysisPrompt,
   buildGenerationPrompt,
@@ -10,7 +11,7 @@ import {
   type BouquetQa,
 } from "./aesthetic-runtime";
 
-interface Env {
+interface Env extends GenerationEnv {
   ASSETS: Fetcher;
   DB: D1Database;
   OPENAI_API_KEY?: string;
@@ -343,10 +344,7 @@ const worker = {
     if (url.pathname === "/api/analyse") return handleAnalyse(request, env);
     if (url.pathname === "/api/render") return handleRender(request, env);
     if (url.pathname === "/api/qa") return handleQa(request, env);
-    if (url.pathname === "/api/generate") return jsonResponse(request, {
-      error: "The generator now uses phased /api/analyse, /api/render and /api/qa requests.",
-      code: "PHASED_GENERATION_REQUIRED",
-    }, 409);
+    if (url.pathname === "/api/generate") return handleGeneration(request, env, { development: import.meta.env.DEV });
 
     if (url.pathname === "/_vinext/image") {
       const allowedWidths = [...DEFAULT_DEVICE_SIZES, ...DEFAULT_IMAGE_SIZES];
