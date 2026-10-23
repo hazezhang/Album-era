@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import { ArrowRight, Printer, RotateCcw } from "lucide-react";
-import CameraTranslation from "./camera-translation";
 
 type Material = { id: string; name: string; cn: string; feel: string; color: string; accent: string; form: string };
 const MATERIALS: Material[] = [
@@ -46,11 +45,10 @@ export default function ExhibitionStudio() {
   const reset = () => { setIds([]); setEdition(0); };
   return <section className="exhibition-studio" id="exhibition">
     <div className="exhibition-heading">
-      <p className="eyebrow">EXHIBITION PROTOTYPE / MATERIAL TO MEMORY</p>
-      <h2>Choose what you feel.<br/><em>Carry what it becomes.</em></h2>
-      <p>Touch and arrange 2–3 materials at the installation table. This digital rehearsal translates their textures into a botanical form and a take-away receipt.</p>
+      <p className="eyebrow">MATERIAL COMPOSITION · PROTOTYPE / PREVIEW</p>
+      <h2>Texture as a source.<br/><em>A study in form.</em></h2>
+      <p>Select 2–3 materials to explore their colours and textures as a deterministic pixel illustration and a browser printable receipt.</p>
     </div>
-    <CameraTranslation />
     <div className="exhibition-grid">
       <div className="exhibition-selector">
         <div className="exhibition-section-name"><span>01 / SELECT YOUR MATERIALS</span><span>{ids.length} / 3</span></div>
@@ -59,7 +57,7 @@ export default function ExhibitionStudio() {
           <span className="material-label"><strong>{item.name}</strong><small>{item.cn} · {item.feel}</small></span>
           <span className="material-check">{ids.includes(item.id) ? "✓" : "+"}</span>
         </button>)}</div>
-        <p className="exhibition-hint">Select at least two materials. In the physical installation, visitors can arrange the matching samples beneath a camera.</p>
+        <p className="exhibition-hint">Select at least two materials. This prototype uses selected swatches; it does not analyse a camera image.</p>
         <button className="exhibition-reset" onClick={reset} type="button"><RotateCcw size={15}/> Start again</button>
       </div>
       <div className="exhibition-result">
